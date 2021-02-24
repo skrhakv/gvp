@@ -354,11 +354,23 @@ class StructuralFeatures(Model):
         return D_neighbors, E_idx, mask_neighbors
    
     def _directions(self, X, E_idx):
-      
+        # X: B, N, 3      
         dX = X[:,1:,:] - X[:,:-1,:]
         X_neighbors = gather_nodes(X, E_idx)
         dX = X_neighbors - tf.expand_dims(X, -2)
         dX = normalize(dX, axis=-1)      
+        return dX
+
+    def _terminal_sidechain_direction(self, X, E_idx):
+        # ['N', 'CA', 'C', 'O', 'T']
+        # X: B, N, 5, 3
+        ca, t = X[:,:,1,:], X[:,:,4,:]
+        # convert t from B, N, 3 to B, N, K, 3
+        X_neighbors = gather_nodes(t, E_idx)
+        # subtract C-alpha positions from t positions
+        dX = X_neighbors - tf.expand_dims(ca, -2)
+        # normalize to unit vector
+        dx = normalize(dX)
         return dX
         
     def _rbf(self, D):
@@ -390,6 +402,11 @@ class StructuralFeatures(Model):
         vec = -bisector * tf.math.sqrt(1/3) - perp * tf.math.sqrt(2/3)
         return vec # B, N, 3
 
+    def _sidechain_terminal_vector(self, X):
+        # ['N', 'CA', 'C', 'O', 'T']
+        # X: B, N, 5, 3
+        ca, t = X[:,:,1,:], X[:,:,4,:]
+        return normalize(t - ca) # B, N, 3
     
     def _dihedrals(self, X, eps=1e-7):
         # First 3 coordinates are N, CA, C
@@ -425,28 +442,35 @@ class StructuralFeatures(Model):
         # Build k-Nearest Neighbors graph
         X_ca = X[:,:,1,:]
         D_neighbors, E_idx, mask_neighbors = self._dist(X_ca, mask)
-        
+
         # Pairwise features
         E_directions = self._directions(X_ca, E_idx)
         RBF = self._rbf(D_neighbors)
         E_positional = self.embeddings(E_idx)
-        
+        E_sidechain_directions = self._terminal_sidechain_direction(X, E_idx)
+
         # Full backbone angles
+        # V_sidechains is a scalar
         V_dihedrals = self._dihedrals(X)
         V_orientations = self._orientations(X_ca)
         V_sidechains = self._sidechains(X)
-        
-        V_vec = tf.concat([tf.expand_dims(V_sidechains, -1), V_orientations], -1)
+
+        # C-alpha-terminal sidechain atom vector
+        V_sidechain_terminal_vector = self._sidechain_terminal_vector(X)
+
+        V_vec = tf.concat([tf.expand_dims(V_sidechains, -1),
+                           tf.expand_dims(V_sidechain_terminal_vector, -1),
+                           V_orientations], -1)
         V = merge(V_vec, V_dihedrals)
-        E = tf.concat([E_directions, RBF, E_positional], -1)
-        
+        E = tf.concat([E_directions, E_sidechain_directions, RBF, E_positional], -1)
+
         # Embed the nodes
         Vv, Vs = self.node_embedding(V, return_split=True)
         V = merge(Vv, self.norm_nodes(Vs))
-        
+
         Ev, Es = self.edge_embedding(E, return_split=True)
         E = merge(Ev, self.norm_edges(Es))
-        
+
         return V, E, E_idx
 
 # Aliases for compatability with the pretrained model
