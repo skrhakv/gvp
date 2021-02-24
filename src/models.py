@@ -40,9 +40,9 @@ class MQAModel(Model):
             Dense(2 * self.hs, activation='relu'),
             Dropout(rate=dropout),
             LayerNormalization(),
-            Dense(1, activation=None)])
+            Dense(1, activation=activations.sigmoid)])
         
-    def call(self, X, S, mask, train=False):
+    def call(self, X, S, mask, train=False, res_level=False):
         # X [B, N, 4, 3], S [B, N], mask [B, N]
 
         V, E, E_idx = self.features(X, mask)
@@ -55,13 +55,15 @@ class MQAModel(Model):
         h_V_out = self.W_V_out(h_V) 
         mask = tf.expand_dims(mask, -1) # [B, N, 1]
 
-        if train:
-          h_V_out = tf.math.reduce_mean(h_V_out * mask, -2) # [B, N, D] -> [B, D]
-        else:
-          h_V_out = tf.math.reduce_sum(h_V_out * mask, -2) # [B, N, D] -> [B, D]
-          h_V_out = tf.math.divide_no_nan(h_V_out, tf.math.reduce_sum(mask, -2)) # [B, D]
+        if not res_level:
+          if train:
+            h_V_out = tf.math.reduce_mean(h_V_out * mask, -2) # [B, N, D] -> [B, D]
+          else:
+            h_V_out = tf.math.reduce_sum(h_V_out * mask, -2) # [B, N, D] -> [B, D]
+            h_V_out = tf.math.divide_no_nan(h_V_out, tf.math.reduce_sum(mask, -2)) # [B, D]
         out = h_V_out
-        out = tf.squeeze(self.dense(out, training=train), -1) + 0.5 # [B]
+        out = self.dense(out, training=train)
+        #out = tf.squeeze(self.dense(out, training=train), -1) + 0.5 # [B]
         
         return out
 
