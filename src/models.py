@@ -447,7 +447,7 @@ class StructuralFeatures(Model):
         E_directions = self._directions(X_ca, E_idx)
         RBF = self._rbf(D_neighbors)
         E_positional = self.embeddings(E_idx)
-        E_sidechain_directions = self._terminal_sidechain_direction(X, E_idx)
+        #E_sidechain_directions = self._terminal_sidechain_direction(X, E_idx)
 
         # Full backbone angles
         # V_sidechains is a scalar
@@ -456,13 +456,16 @@ class StructuralFeatures(Model):
         V_sidechains = self._sidechains(X)
 
         # C-alpha-terminal sidechain atom vector
-        V_sidechain_terminal_vector = self._sidechain_terminal_vector(X)
+        #V_sidechain_terminal_vector = self._sidechain_terminal_vector(X)
 
-        V_vec = tf.concat([tf.expand_dims(V_sidechains, -1),
-                           tf.expand_dims(V_sidechain_terminal_vector, -1),
-                           V_orientations], -1)
+        #V_vec = tf.concat([tf.expand_dims(V_sidechains, -1),
+        #                   tf.expand_dims(V_sidechain_terminal_vector, -1),
+        #                   V_orientations], -1)
+        V_vec = tf.concat([tf.expand_dims(V_sidechains, -1), V_orientations], -1)
+
         V = merge(V_vec, V_dihedrals)
-        E = tf.concat([E_directions, E_sidechain_directions, RBF, E_positional], -1)
+        #E = tf.concat([E_directions, E_sidechain_directions, RBF, E_positional], -1)
+        E = tf.concat([E_directions, RBF, E_positional], -1)
 
         # Embed the nodes
         Vv, Vs = self.node_embedding(V, return_split=True)
