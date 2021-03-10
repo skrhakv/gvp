@@ -18,6 +18,8 @@ import tqdm, sys
 import util, pdb
 from tensorflow import keras as keras
 from models import *
+import os
+from util import save_checkpoint, load_checkpoint
 
 models_dir = '../models/{}_{}'
 
@@ -33,7 +35,7 @@ def main():
   
     model_id = int(datetime.timestamp(datetime.now()))
 
-    NUM_EPOCHS = 1
+    NUM_EPOCHS = 50
     loop_func = loop
     best_epoch, best_val = 0, np.inf
     
@@ -55,7 +57,7 @@ def main():
   # Test with best validation loss
     path = models_dir.format(str(model_id).zfill(3), str(epoch).zfill(3))
     load_checkpoint(model, optimizer, path)  
-    loss, tp, fp, tn, fn, acc, prec, recall, auc = loop_func(testset, model, train=False, val=True)
+    loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true = loop_func(testset, model, train=False, val=True)
     print('EPOCH TEST {:.4f} {:.4f}'.format(loss, acc))
     #util.save_confusion(confusion)
     return loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true
@@ -70,7 +72,7 @@ prec_metric = keras.metrics.Precision(name='precision')
 recall_metric = keras.metrics.Recall(name='recall')
 auc_metric = keras.metrics.AUC(name='auc')
     
-loss_fn = tf.keras.losses.BinaryCrossentropy()
+loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True)
     
 def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
     if val:
@@ -121,14 +123,14 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
 
         batch_num += 1
     if val:
-        tp = tp_metric.result()
-        fp = fp_metric.result()
-        tn = tn_metric.result()
-        fn = fn_metric.result()
-        acc = acc_metric.result()
-        prec = prec_metric.result()
-        recall = recall_metric.result()
-        auc = auc_metric.result()
+        tp = tp_metric.result().numpy()
+        fp = fp_metric.result().numpy()
+        tn = tn_metric.result().numpy()
+        fn = fn_metric.result().numpy()
+        acc = acc_metric.result().numpy()
+        prec = prec_metric.result().numpy()
+        recall = recall_metric.result().numpy()
+        auc = auc_metric.result().numpy()
     
     if val:
         return np.mean(losses), tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true
@@ -136,3 +138,16 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
         return np.mean(losses)
 
 loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true = main()
+outdir = "./metrics/net_8-50_1-32_16-50_50epochs2/"
+os.mkdir(outdir)
+np.save(os.path.join(outdir,"loss.npy"),loss)
+np.save(os.path.join(outdir,"tp.npy"),tp)
+np.save(os.path.join(outdir,"fp.npy"),fp)
+np.save(os.path.join(outdir,"tn.npy"),tn)
+np.save(os.path.join(outdir,"fn.npy"),fn)
+np.save(os.path.join(outdir,"acc.npy"),acc)
+np.save(os.path.join(outdir,"prec.npy"),prec)
+np.save(os.path.join(outdir,"auc.npy"),recall)
+np.save(os.path.join(outdir,"y_pred.npy"),y_pred)
+np.save(os.path.join(outdir,"y_true.npy"),y_true)
+

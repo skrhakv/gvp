@@ -5,12 +5,12 @@ import pandas as pd
 import glob
 import os
 
-TRAIN_INDS_FN = "/Users/mickdub/bowman_lab/rocklin-collab/protease-data/train_inds_balanced_oversampling.npy"
-VAL_INDS_FN = "/Users/mickdub/bowman_lab/rocklin-collab/protease-data/validation_inds.npy"
-TEST_INDS_FN = "/Users/mickdub/bowman_lab/rocklin-collab/protease-data/test_inds.npy"
+TRAIN_INDS_FN = "/project/bowmanlab/mdward/projects/rocklin-collab/training/train_inds_balanced_oversampling.npy"
+VAL_INDS_FN = "/project/bowmanlab/mdward/projects/rocklin-collab/training/validation_inds.npy"
+TEST_INDS_FN = "/project/bowmanlab/mdward/projects/rocklin-collab/training/test_inds.npy"
 
-PROTEASE_DATA_DIR = "/Users/mickdub/bowman_lab/rocklin-collab/protease-data/"
-PROTEASE_DATA = "/Users/mickdub/bowman_lab/rocklin-collab/protease-data/miniprotein_rd123456_newvec_stability_GJR_210203.csv"
+PROTEASE_DATA_DIR = "/project/bowmanlab/mdward/projects/rocklin-collab/protease-data/"
+PROTEASE_DATA = "/project/bowmanlab/mdward/projects/rocklin-collab/protease-data/miniprotein_rd123456_newvec_stability_GJR_210203.csv"
 
 
 def rocklin_dataset(batch_size):
@@ -37,7 +37,7 @@ def parse_batch(batch):
     pdbs = []
     for ind in batch:
         pdb_fn = df.iloc[ind]['name']
-        fn = glob.glob(os.path.join(PROTEASE_DATA_DIR,"rd*/%s" % pdb_fn)
+        fn = glob.glob(os.path.join(PROTEASE_DATA_DIR,"rd*/%s" % pdb_fn))
         pdbs.append(md.load(fn))
     
     B = len(batch)
