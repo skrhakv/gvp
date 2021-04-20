@@ -5,73 +5,89 @@ import pandas as pd
 import glob
 import os
 
-TRAIN_INDS_FN = "/project/bowmanlab/mdward/projects/rocklin-collab/training/train_inds_balanced_oversampling.npy"
-VAL_INDS_FN = "/project/bowmanlab/mdward/projects/rocklin-collab/training/validation_inds.npy"
-TEST_INDS_FN = "/project/bowmanlab/mdward/projects/rocklin-collab/training/test_inds.npy"
 
-PROTEASE_DATA_DIR = "/project/bowmanlab/mdward/projects/rocklin-collab/protease-data/"
-PROTEASE_DATA = "/project/bowmanlab/mdward/projects/rocklin-collab/protease-data/miniprotein_rd123456_newvec_stability_GJR_210203.csv"
+abbrev = {"ALA" : "A" , "ARG" : "R" , "ASN" : "N" , "ASP" : "D" , "CYS" : "C" , "CYM" : "C", "GLU" : "E" , "GLN" : "Q" , "GLY" : "G" , "HIS" : "H" , "ILE" : "I" , "LEU" : "L" , "LYS" : "K" , "MET" : "M" , "PHE" : "F" , "PRO" : "P" , "SER" : "S" , "THR" : "T" , "TRP" : "W" , "TYR" : "Y" , "VAL" : "V"}
+lookup = {'C': 4, 'D': 3, 'S': 15, 'Q': 5, 'K': 11, 'I': 9, 'P': 14, 'T': 16, 'F': 13, 'A': 0, 'G': 7, 'H': 8, 'E': 6, 'L': 10, 'R': 1, 'W': 17, 'V': 19, 'N': 2, 'Y': 18, 'M': 12}
 
-
-def rocklin_dataset(batch_size):
-    trainset = np.load(TRAIN_INDS_FN)
-    valset = np.load(VAL_INDS_FN)
-    testset = np.load(TEST_INDS_FN)
+def pockets_dataset(batch_size):
+    #will have [(xtc,pdb,index,residue,1/0),...]
+    X_train = np.load("/project/bowmore/ameller/projects/jugbooks/ligsite-pocket-calcs/X_train.npy")
+    y_train = np.load("/project/bowmore/ameller/projects/jugbooks/ligsite-pocket-calcs/y_train.npy")
+    y_train = y_train.reshape(len(y_train),1)
+    trainset = np.concatenate([X_train,y_train],axis=1)
+    assert trainset.shape[1] == 5
+    
+    X_validate = np.load("/project/bowmore/ameller/projects/jugbooks/ligsite-pocket-calcs/X_validate.npy")
+    y_validate = np.load("/project/bowmore/ameller/projects/jugbooks/ligsite-pocket-calcs/y_validate.npy")
+    y_validate = y_validate.reshape(len(y_validate),1)
+    valset = np.concatenate([X_validate,y_validate],axis=1)
+    
+    X_test = np.load("/project/bowmore/ameller/projects/jugbooks/ligsite-pocket-calcs/X_test.npy")
+    y_test = np.load("/project/bowmore/ameller/projects/jugbooks/ligsite-pocket-calcs/y_test.npy")
+    y_test = y_test.reshape(len(y_test),1)
+    testset = np.concatenate([X_test,y_test],axis=1)
     
     trainset = DynamicLoader(trainset, batch_size)
     valset = DynamicLoader(valset, batch_size)
     testset = DynamicLoader(testset, batch_size)
     
-    output_types = (tf.float32, tf.int32, tf.float32, tf.float32)
+    output_types = (tf.float32, tf.int32, tf.int32, tf.float32, tf.float32)
     trainset = tf.data.Dataset.from_generator(trainset.__iter__, output_types=output_types).prefetch(3)
     valset = tf.data.Dataset.from_generator(valset.__iter__, output_types=output_types).prefetch(3)
     testset = tf.data.Dataset.from_generator(testset.__iter__, output_types=output_types).prefetch(3)
     
     return trainset, valset, testset
 
-abbrev = {"ALA" : "A" , "ARG" : "R" , "ASN" : "N" , "ASP" : "D" , "CYS" : "C" , "GLU" : "E" , "GLN" : "Q" , "GLY" : "G" , "HIS" : "H" , "ILE" : "I" , "LEU" : "L" , "LYS" : "K" , "MET" : "M" , "PHE" : "F" , "PRO" : "P" , "SER" : "S" , "THR" : "T" , "TRP" : "W" , "TYR" : "Y" , "VAL" : "V"}
-lookup = {'C': 4, 'D': 3, 'S': 15, 'Q': 5, 'K': 11, 'I': 9, 'P': 14, 'T': 16, 'F': 13, 'A': 0, 'G': 7, 'H': 8, 'E': 6, 'L': 10, 'R': 1, 'W': 17, 'V': 19, 'N': 2, 'Y': 18, 'M': 12}
-
 def parse_batch(batch):
-    df = pd.read_csv(PROTEASE_DATA)
+    #Batch will have [(xtc,pdb,index,residue,1/0),...]
     pdbs = []
-    for ind in batch:
-        pdb_fn = df.iloc[ind]['name']
-        fn = glob.glob(os.path.join(PROTEASE_DATA_DIR,"rd*/%s" % pdb_fn))
-        pdbs.append(md.load(fn))
+    #can parallelize to improve speed
+    for ex in batch:
+        pdb = md.load(ex[1])
+        prot_iis = pdb.top.select("protein and (name N or name CA or name C or name O)")
+        prot_bb = pdb.atom_slice(prot_iis)
+        pdbs.append(prot_bb)
     
     B = len(batch)
     L_max = np.max([pdb.top.n_residues for pdb in pdbs])
     X = np.zeros([B, L_max, 4, 3], dtype=np.float32)
     S = np.zeros([B, L_max], dtype=np.int32)
     
-    for i, pdb in enumerate(pdbs):
-        l = pdb.top.n_residues
+    y = []
+    resids = []
+    for i,ex in enumerate(batch):
+        traj_fn, pdb_fn, traj_iis, resid, targ = ex
+        traj_iis = int(traj_iis)
+        resid = int(resid[3:])
+        targ = int(targ)
+        
+        pdb = md.load(pdb_fn)
+        struc = md.load_frame(traj_fn,traj_iis,top=pdb)
+        prot_iis = struc.top.select("protein and (name N or name CA or name C or name O)")
+        prot_bb = struc.atom_slice(prot_iis)
+        l = prot_bb.top.n_residues
+        xyz = prot_bb.xyz.reshape(l,4,3)
+        
         seq = [r.name for r in pdb.top.residues]
         S[i, :l] = np.asarray([lookup[abbrev[a]] for a in seq], dtype=np.int32)
-        
-        pdb_inds = pdb.top.select("name N or name CA or name C or name O")
-        pdb = pdb.atom_slice(pdb_inds)
-        xyz = pdb.xyz.reshape(l,4,3)   
-        
-        # Pad to the maximum length in the batch
         X[i] = np.pad(xyz, [[0,L_max-l], [0,0], [0,0]],
                         'constant', constant_values=(np.nan, ))
-    
-    #Output targets are structures with stabilities > 1
-    scores = df.iloc[batch]['stabilityscore'].values
-    y = scores >= 1
+        y.append(targ)
+        resids.append(resid)
+
+    y = np.array(y)
+    y = y >= 1
     y = y.astype(int)
-    
+        
     isnan = np.isnan(X)
     mask = np.isfinite(np.sum(X,(2,3))).astype(np.float32)
     X[isnan] = 0.
     X = np.nan_to_num(X)
         
-    return X, S, y, mask
-
+    return X, S, np.array(resids), np.array(y), mask
+    
 class DynamicLoader(): 
-    def __init__(self, dataset, batch_size=32, shuffle=True): 
+    def __init__(self, dataset, batch_size=32, shuffle=True):
         self.dataset = dataset
         self.batch_size = batch_size
         self.shuffle = shuffle
@@ -83,6 +99,7 @@ class DynamicLoader():
         
     def batch(self):
         dataset = self.dataset
+        np.random.shuffle(dataset)
         self.clusters = list(self.chunks(dataset,self.batch_size))
 
     def __iter__(self):
@@ -91,3 +108,5 @@ class DynamicLoader():
         N = len(self.clusters)
         for batch in self.clusters[:N]:
             yield parse_batch(batch)
+
+
