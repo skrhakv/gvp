@@ -94,7 +94,7 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
             with tf.GradientTape() as tape:
                 prediction = model(X, S, M, train=True, res_level=True)
                 #Grab only the residues in this batch
-                iis = [[i,j] for i,j in zip(np.arange(len(prediction),resid))]
+                iis = [[i,j] for i,j in zip(np.arange(len(prediction)),resid)]
                 prediction = tf.gather_nd(prediction,indices=iis)
                 loss_value = loss_fn(y, prediction)
                 print(loss_value)
