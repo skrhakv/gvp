@@ -68,7 +68,7 @@ def parse_batch(batch):
         l = prot_bb.top.n_residues
         xyz = prot_bb.xyz.reshape(l,4,3)
         
-        seq = [r.name for r in pdb.top.residues]
+        seq = [r.name for r in prot_bb.top.residues]
         S[i, :l] = np.asarray([lookup[abbrev[a]] for a in seq], dtype=np.int32)
         X[i] = np.pad(xyz, [[0,L_max-l], [0,0], [0,0]],
                         'constant', constant_values=(np.nan, ))
