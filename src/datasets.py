@@ -76,7 +76,7 @@ def parse_batch(batch):
         resids.append(resid)
 
     y = np.array(y)
-    y = y >= 1
+    y = y >= 10
     y = y.astype(int)
         
     isnan = np.isnan(X)
