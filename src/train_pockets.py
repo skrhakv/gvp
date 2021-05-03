@@ -29,13 +29,13 @@ def make_model():
     return model
 
 def main():
-    trainset, valset, testset = pockets_dataset(2)# batch size = N residues
+    trainset, valset, testset = pockets_dataset(8)# batch size = N residues
     optimizer = tf.keras.optimizers.Adam()
     model = make_model()
   
     model_id = int(datetime.timestamp(datetime.now()))
 
-    NUM_EPOCHS = 50
+    NUM_EPOCHS = 1
     loop_func = loop
     best_epoch, best_val = 0, np.inf
     
@@ -100,7 +100,7 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
                 print(loss_value)
         else:
             prediction = model(X, S, M, train=True, res_level=True)
-            iis = [[i,j] for i,j in zip(np.arange(len(prediction),resid))]
+            iis = [[i,j] for i,j in zip(np.arange(len(prediction)),resid)]
             prediction = tf.gather_nd(prediction,indices=iis)
             loss_value = loss_fn(y, prediction)
         if train:
@@ -143,7 +143,7 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
         return np.mean(losses)
 
 loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true = main()
-outdir = "./metrics/net_8-50_1-32_16-100_50epochs_bs2/"
+outdir = "./metrics/net_8-50_1-32_16-100_50epochs_bs8_2/"
 os.mkdir(outdir)
 np.save(os.path.join(outdir,"loss.npy"),loss)
 np.save(os.path.join(outdir,"tp.npy"),tp)
