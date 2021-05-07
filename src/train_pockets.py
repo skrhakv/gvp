@@ -29,7 +29,7 @@ def make_model():
     return model
 
 def main():
-    trainset, valset, testset = pockets_dataset(8)# batch size = N residues
+    trainset, valset, testset = pockets_dataset(1)# batch size = N proteins
     optimizer = tf.keras.optimizers.Adam()
     model = make_model()
   
@@ -89,20 +89,30 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
     y_pred, y_true, targets = [], [], []
     batch_num = 0
     for batch in tqdm.tqdm(dataset):
-        X, S, resid, y, M = batch
+        X, S, y, M = batch
         if train:
             with tf.GradientTape() as tape:
                 prediction = model(X, S, M, train=True, res_level=True)
-                #Grab only the residues in this batch
-                iis = [[i,j] for i,j in zip(np.arange(len(prediction)),resid)]
+                #Grab balanced set of residues
+                iis = choose_balanced_inds(y,40,10)
+                print(iis)
+                y = tf.gather_nd(y,indices=iis)
+                y = y >= 40
+                y = tf.cast(y,tf.float32)
                 prediction = tf.gather_nd(prediction,indices=iis)
                 loss_value = loss_fn(y, prediction)
-                print(loss_value)
         else:
-            prediction = model(X, S, M, train=True, res_level=True)
-            iis = [[i,j] for i,j in zip(np.arange(len(prediction)),resid)]
-            prediction = tf.gather_nd(prediction,indices=iis)
-            loss_value = loss_fn(y, prediction)
+            if val:
+                prediction = model(X, S, M, train=True, res_level=True)
+                loss_value = loss_fn(y, prediction) 
+            else:
+                prediction = model(X, S, M, train=True, res_level=True)
+                iis = choose_balanced_inds(y,40,10)
+                y = tf.gather_nd(y,indices=iis)
+                y = y >= 40
+                y = tf.cast(y,tf.float32)
+                prediction = tf.gather_nd(prediction,indices=iis)
+                loss_value = loss_fn(y, prediction)
         if train:
             assert(np.isfinite(float(loss_value)))
             grads = tape.gradient(loss_value, model.trainable_weights)
@@ -142,8 +152,47 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
     else:
         return np.mean(losses)
 
+def choose_balanced_inds(y,pos_thresh,neg_thresh):
+    iis_pos = [np.where(np.array(i)>=pos_thresh)[0] for i in y]
+    iis_neg = [np.where(np.array(i)<neg_thresh)[0] for i in y]
+    count = 0
+    iis = []
+    for i,j in zip(iis_pos,iis_neg):
+        print(len(i),len(j))
+        if len(i) < len(j):
+            subset = np.random.choice(j,len(i),replace=False) 
+            subset_iis = [[count,s] for s in subset]
+            for pair in subset_iis:
+                iis.append(pair)
+            subset_iis = [[count,s] for s in i]
+            for pair in subset_iis:
+                iis.append(pair)
+        elif len(j) < len(i):
+            subset = np.random.choice(i,len(j),replace=False)
+            subset_iis = [[count,s] for s in subset]
+            for pair in subset_iis:
+                iis.append(pair)
+            subset_iis = [[count,s] for s in j]
+            for pair in subset_iis:
+                iis.append(pair)
+        else:
+            subset_iis = [[count,s] for s in j]
+            for pair in subset_iis:
+                iis.append(pair)
+            subset_iis = [[count,s] for s in i]
+            for pair in subset_iis:
+                iis.append(pair)
+            
+        count+=1
+    #hacky way to deal with situation when there are no positive examples (or negative)
+    #for a given structure
+    if len(iis)==0:
+        iis =[[0,0]]
+
+    return iis
+
 loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true = main()
-outdir = "./metrics/net_8-50_1-32_16-100_50epochs_bs8_2/"
+outdir = "./metrics/net_8-50_1-32_16-100_1epoch_bs1prot/"
 os.mkdir(outdir)
 np.save(os.path.join(outdir,"loss.npy"),loss)
 np.save(os.path.join(outdir,"tp.npy"),tp)

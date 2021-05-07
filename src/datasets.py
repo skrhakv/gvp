@@ -9,29 +9,27 @@ import os
 abbrev = {"ALA" : "A" , "ARG" : "R" , "ASN" : "N" , "ASP" : "D" , "CYS" : "C" , "CYM" : "C", "GLU" : "E" , "GLN" : "Q" , "GLY" : "G" , "HIS" : "H" , "ILE" : "I" , "LEU" : "L" , "LYS" : "K" , "MET" : "M" , "PHE" : "F" , "PRO" : "P" , "SER" : "S" , "THR" : "T" , "TRP" : "W" , "TYR" : "Y" , "VAL" : "V"}
 lookup = {'C': 4, 'D': 3, 'S': 15, 'Q': 5, 'K': 11, 'I': 9, 'P': 14, 'T': 16, 'F': 13, 'A': 0, 'G': 7, 'H': 8, 'E': 6, 'L': 10, 'R': 1, 'W': 17, 'V': 19, 'N': 2, 'Y': 18, 'M': 12}
 
+DATA_DIR = "/project/bowmanlab/mdward/projects/FAST-pocket-pred/gvp/data"
+
 def pockets_dataset(batch_size):
     #will have [(xtc,pdb,index,residue,1/0),...]
-    X_train = np.load("/project/bowmore/ameller/projects/jugbooks/ligsite-pocket-calcs/X_train.npy")
-    y_train = np.load("/project/bowmore/ameller/projects/jugbooks/ligsite-pocket-calcs/y_train.npy")
-    y_train = y_train.reshape(len(y_train),1)
-    trainset = np.concatenate([X_train,y_train],axis=1)
-    assert trainset.shape[1] == 5
-    
-    X_validate = np.load("/project/bowmore/ameller/projects/jugbooks/ligsite-pocket-calcs/X_validate.npy")
-    y_validate = np.load("/project/bowmore/ameller/projects/jugbooks/ligsite-pocket-calcs/y_validate.npy")
-    y_validate = y_validate.reshape(len(y_validate),1)
-    valset = np.concatenate([X_validate,y_validate],axis=1)
-    
-    X_test = np.load("/project/bowmore/ameller/projects/jugbooks/ligsite-pocket-calcs/X_test.npy")
-    y_test = np.load("/project/bowmore/ameller/projects/jugbooks/ligsite-pocket-calcs/y_test.npy")
-    y_test = y_test.reshape(len(y_test),1)
-    testset = np.concatenate([X_test,y_test],axis=1)
-    
+    X_train = np.load(os.path.join(DATA_DIR,"X_train.npy"))
+    y_train = np.load(os.path.join(DATA_DIR,"y_train.npy"),allow_pickle=True)
+    trainset = list(zip(X_train,y_train))   
+
+    X_validate = np.load(os.path.join(DATA_DIR,"X_validate.npy"))
+    y_validate = np.load(os.path.join(DATA_DIR,"y_validate.npy"),allow_pickle=True)
+    valset = list(zip(X_validate,y_validate))    
+
+    X_test = np.load(os.path.join(DATA_DIR,"X_test.npy"))
+    y_test = np.load(os.path.join(DATA_DIR,"y_test.npy"),allow_pickle=True)
+    testset = list(zip(X_test, y_test))    
+
     trainset = DynamicLoader(trainset, batch_size)
     valset = DynamicLoader(valset, batch_size)
     testset = DynamicLoader(testset, batch_size)
     
-    output_types = (tf.float32, tf.int32, tf.int32, tf.float32, tf.float32)
+    output_types = (tf.float32, tf.int32, tf.float32, tf.float32)
     trainset = tf.data.Dataset.from_generator(trainset.__iter__, output_types=output_types).prefetch(3)
     valset = tf.data.Dataset.from_generator(valset.__iter__, output_types=output_types).prefetch(3)
     testset = tf.data.Dataset.from_generator(testset.__iter__, output_types=output_types).prefetch(3)
@@ -43,7 +41,8 @@ def parse_batch(batch):
     pdbs = []
     #can parallelize to improve speed
     for ex in batch:
-        pdb = md.load(ex[1])
+        x, y = ex
+        pdb = md.load(x[1])
         prot_iis = pdb.top.select("protein and (name N or name CA or name C or name O)")
         prot_bb = pdb.atom_slice(prot_iis)
         pdbs.append(prot_bb)
@@ -56,10 +55,9 @@ def parse_batch(batch):
     y = []
     resids = []
     for i,ex in enumerate(batch):
-        traj_fn, pdb_fn, traj_iis, resid, targ = ex
+        x, targs = ex
+        traj_fn, pdb_fn, traj_iis = x
         traj_iis = int(traj_iis)
-        resid = int(resid[3:])
-        targ = int(targ)
         
         pdb = md.load(pdb_fn)
         struc = md.load_frame(traj_fn,traj_iis,top=pdb)
@@ -72,19 +70,14 @@ def parse_batch(batch):
         S[i, :l] = np.asarray([lookup[abbrev[a]] for a in seq], dtype=np.int32)
         X[i] = np.pad(xyz, [[0,L_max-l], [0,0], [0,0]],
                         'constant', constant_values=(np.nan, ))
-        y.append(targ)
-        resids.append(resid)
+        y.append(targs)
 
-    y = np.array(y)
-    y = y >= 10
-    y = y.astype(int)
-        
     isnan = np.isnan(X)
     mask = np.isfinite(np.sum(X,(2,3))).astype(np.float32)
     X[isnan] = 0.
     X = np.nan_to_num(X)
         
-    return X, S, np.array(resids), np.array(y), mask
+    return X, S, y, mask
     
 class DynamicLoader(): 
     def __init__(self, dataset, batch_size=32, shuffle=True):
