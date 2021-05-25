@@ -29,7 +29,7 @@ def make_model():
     return model
 
 def main():
-    trainset, valset, testset = pockets_dataset(1)# batch size = N proteins
+    trainset, valset, testset = pockets_dataset(2)# batch size = N proteins
     optimizer = tf.keras.optimizers.Adam()
     model = make_model()
   
@@ -104,6 +104,11 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
         else:
             if val:
                 prediction = model(X, S, M, train=True, res_level=True)
+                iis = convert_test_targs(y,40,10)
+                y = tf.gather_nd(y,indices=iis)
+                y = y >= 40
+                y = tf.cast(y,tf.float32)
+                prediction = tf.gather_nd(prediction,indices=iis)
                 loss_value = loss_fn(y, prediction) 
             else:
                 prediction = model(X, S, M, train=True, res_level=True)
@@ -152,9 +157,27 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
     else:
         return np.mean(losses)
 
+def convert_test_targs(y,pos_thresh,neg_thresh):
+#Need to convert targs (volumes) to 1s and 0s but also discard
+#intermediate values
+    iis_pos = [np.where(np.array(i)>=pos_thresh)[0] for i in y]
+    iis_neg = [np.where((np.array(i)<neg_thresh) & (np.array(i)>-1))[0] for i in y]
+    iis = []
+    count = 0
+    for i,j in zip(iis_pos,iis_neg):
+        subset_iis = [[count,s] for s in j]
+        for pair in subset_iis:
+            iis.append(pair)
+        subset_iis = [[count,s] for s in i]
+        for pair in subset_iis:
+            iis.append(pair)
+        count+=1
+
+    return iis
+
 def choose_balanced_inds(y,pos_thresh,neg_thresh):
     iis_pos = [np.where(np.array(i)>=pos_thresh)[0] for i in y]
-    iis_neg = [np.where(np.array(i)<neg_thresh)[0] for i in y]
+    iis_neg = [np.where((np.array(i)<neg_thresh) & (np.array(i) > -1))[0] for i in y]
     count = 0
     iis = []
     for i,j in zip(iis_pos,iis_neg):
@@ -192,7 +215,7 @@ def choose_balanced_inds(y,pos_thresh,neg_thresh):
     return iis
 
 loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true = main()
-outdir = "./metrics/net_8-50_1-32_16-100_1epoch_bs1prot/"
+outdir = "./metrics/net_8-50_1-32_16-100_1epoch_bs2prot/"
 os.mkdir(outdir)
 np.save(os.path.join(outdir,"loss.npy"),loss)
 np.save(os.path.join(outdir,"tp.npy"),tp)

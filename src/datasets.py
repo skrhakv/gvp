@@ -29,7 +29,7 @@ def pockets_dataset(batch_size):
     valset = DynamicLoader(valset, batch_size)
     testset = DynamicLoader(testset, batch_size)
     
-    output_types = (tf.float32, tf.int32, tf.float32, tf.float32)
+    output_types = (tf.float32, tf.int32, tf.int32, tf.float32)
     trainset = tf.data.Dataset.from_generator(trainset.__iter__, output_types=output_types).prefetch(3)
     valset = tf.data.Dataset.from_generator(valset.__iter__, output_types=output_types).prefetch(3)
     testset = tf.data.Dataset.from_generator(testset.__iter__, output_types=output_types).prefetch(3)
@@ -51,8 +51,9 @@ def parse_batch(batch):
     L_max = np.max([pdb.top.n_residues for pdb in pdbs])
     X = np.zeros([B, L_max, 4, 3], dtype=np.float32)
     S = np.zeros([B, L_max], dtype=np.int32)
-    
-    y = []
+    # -1 so we can distinguish 0 pocket volume and padded indices later 
+    y = np.zeros([B, L_max], dtype=np.int32)-1 
+
     resids = []
     for i,ex in enumerate(batch):
         x, targs = ex
@@ -70,8 +71,8 @@ def parse_batch(batch):
         S[i, :l] = np.asarray([lookup[abbrev[a]] for a in seq], dtype=np.int32)
         X[i] = np.pad(xyz, [[0,L_max-l], [0,0], [0,0]],
                         'constant', constant_values=(np.nan, ))
-        y.append(targs)
-
+        y[i, :l] = targs
+    
     isnan = np.isnan(X)
     mask = np.isfinite(np.sum(X,(2,3))).astype(np.float32)
     X[isnan] = 0.
