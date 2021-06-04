@@ -40,7 +40,7 @@ class MQAModel(Model):
             Dense(2 * self.hs, activation='relu'),
             Dropout(rate=dropout),
             LayerNormalization(),
-            Dense(1, activation='sigmoid')])
+            Dense(1, activation=None)])
         
     def call(self, X, S, mask, train=False, res_level=False):
         # X [B, N, 4, 3], S [B, N], mask [B, N]

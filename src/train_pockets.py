@@ -29,7 +29,9 @@ def make_model():
     return model
 
 def main():
-    trainset, valset, testset = pockets_dataset(2)# batch size = N proteins
+    bs = 2
+    trainset, valset, testset = pockets_dataset(bs)# batch size = N proteins
+    print(bs)
     optimizer = tf.keras.optimizers.Adam()
     model = make_model()
   
@@ -57,10 +59,10 @@ def main():
   # Test with best validation loss
     path = models_dir.format(str(model_id).zfill(3), str(epoch).zfill(3))
     load_checkpoint(model, optimizer, path)  
-    loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true = loop_func(testset, model, train=False, val=True)
-    print('EPOCH TEST {:.4f} {:.4f}'.format(loss, acc))
+    loss, y_pred, y_true = loop_func(testset, model, train=False, val=True)
+    print('EPOCH TEST {:.4f}'.format(loss))
     #util.save_confusion(confusion)
-    return loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true
+    return loss, y_pred, y_true
     
     
 tp_metric = keras.metrics.TruePositives(name='tp')
@@ -72,18 +74,20 @@ prec_metric = keras.metrics.Precision(name='precision')
 recall_metric = keras.metrics.Recall(name='recall')
 auc_metric = keras.metrics.AUC(name='auc')
     
-loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=False)
-    
+#loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=False)
+loss_fn = tf.keras.losses.MeanSquaredError()    
+
 def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
     if val:
-        tp_metric.reset_states()
-        fp_metric.reset_states()
-        tn_metric.reset_states()
-        fn_metric.reset_states()
-        acc_metric.reset_states()
-        prec_metric.reset_states()
-        recall_metric.reset_states()
-        auc_metric.reset_states()
+        pass
+        #tp_metric.reset_states()
+        #fp_metric.reset_states()
+        #tn_metric.reset_states()
+        #fn_metric.reset_states()
+        #acc_metric.reset_states()
+        #prec_metric.reset_states()
+        #recall_metric.reset_states()
+        #auc_metric.reset_states()
     
     losses = []
     y_pred, y_true, targets = [], [], []
@@ -94,28 +98,33 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
             with tf.GradientTape() as tape:
                 prediction = model(X, S, M, train=True, res_level=True)
                 #Grab balanced set of residues
-                iis = choose_balanced_inds(y,40,10)
-                print(iis)
+                #iis = choose_balanced_inds(y,40,10)
+                iis = choose_regress_inds(y)
+                #print(iis)
                 y = tf.gather_nd(y,indices=iis)
-                y = y >= 40
-                y = tf.cast(y,tf.float32)
+                #y = y >= 40
+                #y = tf.cast(y,tf.float32)
                 prediction = tf.gather_nd(prediction,indices=iis)
                 loss_value = loss_fn(y, prediction)
+            #print(prediction.numpy().shape)
+            #print(y.numpy().shape)
         else:
             if val:
                 prediction = model(X, S, M, train=True, res_level=True)
-                iis = convert_test_targs(y,40,10)
+                #iis = convert_test_targs(y,40,10)
+                iis = choose_regress_inds(y)
                 y = tf.gather_nd(y,indices=iis)
-                y = y >= 40
-                y = tf.cast(y,tf.float32)
+                #y = y >= 40
+                #y = tf.cast(y,tf.float32)
                 prediction = tf.gather_nd(prediction,indices=iis)
                 loss_value = loss_fn(y, prediction) 
             else:
                 prediction = model(X, S, M, train=True, res_level=True)
-                iis = choose_balanced_inds(y,40,10)
+                #iis = choose_balanced_inds(y,40,10)
+                iis = choose_regress_inds(y)
                 y = tf.gather_nd(y,indices=iis)
-                y = y >= 40
-                y = tf.cast(y,tf.float32)
+                #y = y >= 40
+                #y = tf.cast(y,tf.float32)
                 prediction = tf.gather_nd(prediction,indices=iis)
                 loss_value = loss_fn(y, prediction)
         if train:
@@ -130,32 +139,44 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
         y_true.extend(y.numpy().tolist())
         
         if val:
-            y = tf.squeeze(y)
-            prediction = tf.squeeze(prediction)
-            tp_metric.update_state(y,prediction)
-            fp_metric.update_state(y,prediction)
-            tn_metric.update_state(y,prediction)
-            fn_metric.update_state(y,prediction)
-            acc_metric.update_state(y,prediction)
-            prec_metric.update_state(y,prediction)
-            recall_metric.update_state(y,prediction)
-            auc_metric.update_state(y,prediction)
+            pass
+            #y = tf.squeeze(y)
+            #prediction = tf.squeeze(prediction)
+            #tp_metric.update_state(y,prediction)
+            #fp_metric.update_state(y,prediction)
+            #tn_metric.update_state(y,prediction)
+            #fn_metric.update_state(y,prediction)
+            #acc_metric.update_state(y,prediction)
+            #prec_metric.update_state(y,prediction)
+            #recall_metric.update_state(y,prediction)
+            #auc_metric.update_state(y,prediction)
 
         batch_num += 1
     if val:
-        tp = tp_metric.result().numpy()
-        fp = fp_metric.result().numpy()
-        tn = tn_metric.result().numpy()
-        fn = fn_metric.result().numpy()
-        acc = acc_metric.result().numpy()
-        prec = prec_metric.result().numpy()
-        recall = recall_metric.result().numpy()
-        auc = auc_metric.result().numpy()
+        pass
+        #tp = tp_metric.result().numpy()
+        #fp = fp_metric.result().numpy()
+        #tn = tn_metric.result().numpy()
+        #fn = fn_metric.result().numpy()
+        #acc = acc_metric.result().numpy()
+        #prec = prec_metric.result().numpy()
+        #recall = recall_metric.result().numpy()
+        #auc = auc_metric.result().numpy()
     
     if val:
-        return np.mean(losses), tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true
+        return np.mean(losses), y_pred, y_true
     else:
         return np.mean(losses)
+
+def choose_regress_inds(y):
+    iis_list = [np.where(np.array(i) > -1)[0] for i in y]
+    paired_iis = []
+    count = 0
+    for iis in iis_list:
+        for i in iis:
+            paired_iis.append([count,i])
+    return paired_iis
+      
 
 def convert_test_targs(y,pos_thresh,neg_thresh):
 #Need to convert targs (volumes) to 1s and 0s but also discard
@@ -214,17 +235,17 @@ def choose_balanced_inds(y,pos_thresh,neg_thresh):
 
     return iis
 
-loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true = main()
-outdir = "./metrics/net_8-50_1-32_16-100_1epoch_bs2prot/"
+loss, y_pred, y_true = main()
+outdir = "./metrics/net_8-50_1-32_16-100_1epoch_b2prot_regression-test/"
 os.mkdir(outdir)
 np.save(os.path.join(outdir,"loss.npy"),loss)
-np.save(os.path.join(outdir,"tp.npy"),tp)
-np.save(os.path.join(outdir,"fp.npy"),fp)
-np.save(os.path.join(outdir,"tn.npy"),tn)
-np.save(os.path.join(outdir,"fn.npy"),fn)
-np.save(os.path.join(outdir,"acc.npy"),acc)
-np.save(os.path.join(outdir,"prec.npy"),prec)
-np.save(os.path.join(outdir,"auc.npy"),recall)
+#np.save(os.path.join(outdir,"tp.npy"),tp)
+#np.save(os.path.join(outdir,"fp.npy"),fp)
+#np.save(os.path.join(outdir,"tn.npy"),tn)
+#np.save(os.path.join(outdir,"fn.npy"),fn)
+#np.save(os.path.join(outdir,"acc.npy"),acc)
+#np.save(os.path.join(outdir,"prec.npy"),prec)
+#np.save(os.path.join(outdir,"auc.npy"),recall)
 np.save(os.path.join(outdir,"y_pred.npy"),y_pred)
 np.save(os.path.join(outdir,"y_true.npy"),y_true)
 
