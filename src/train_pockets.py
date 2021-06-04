@@ -35,7 +35,7 @@ def main():
   
     model_id = int(datetime.timestamp(datetime.now()))
 
-    NUM_EPOCHS = 1
+    NUM_EPOCHS = 50
     loop_func = loop
     best_epoch, best_val = 0, np.inf
     
