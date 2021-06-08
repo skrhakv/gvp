@@ -29,7 +29,7 @@ def make_model():
     return model
 
 def main():
-    trainset, valset, testset = pockets_dataset(2)# batch size = N proteins
+    trainset, valset, testset = pockets_dataset(4)# batch size = N proteins
     optimizer = tf.keras.optimizers.Adam()
     model = make_model()
   
@@ -103,7 +103,7 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
                 loss_value = loss_fn(y, prediction)
         else:
             if val:
-                prediction = model(X, S, M, train=True, res_level=True)
+                prediction = model(X, S, M, train=False, res_level=True)
                 iis = convert_test_targs(y,40,10)
                 y = tf.gather_nd(y,indices=iis)
                 y = y >= 40
@@ -111,7 +111,7 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
                 prediction = tf.gather_nd(prediction,indices=iis)
                 loss_value = loss_fn(y, prediction) 
             else:
-                prediction = model(X, S, M, train=True, res_level=True)
+                prediction = model(X, S, M, train=False, res_level=True)
                 iis = choose_balanced_inds(y,40,10)
                 y = tf.gather_nd(y,indices=iis)
                 y = y >= 40
@@ -215,7 +215,8 @@ def choose_balanced_inds(y,pos_thresh,neg_thresh):
     return iis
 
 loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true = main()
-outdir = "./metrics/net_8-50_1-32_16-100_1epoch_bs2prot/"
+outdir = "./metrics/net_8-50_1-32_16-100_50epoch_b4prot_protein-split2/"
+print(outdir)
 os.mkdir(outdir)
 np.save(os.path.join(outdir,"loss.npy"),loss)
 np.save(os.path.join(outdir,"tp.npy"),tp)
@@ -224,7 +225,8 @@ np.save(os.path.join(outdir,"tn.npy"),tn)
 np.save(os.path.join(outdir,"fn.npy"),fn)
 np.save(os.path.join(outdir,"acc.npy"),acc)
 np.save(os.path.join(outdir,"prec.npy"),prec)
-np.save(os.path.join(outdir,"auc.npy"),recall)
+np.save(os.path.join(outdir,"recall.npy"),recall)
+np.save(os.path.join(outdir,"auc.npy"),auc)
 np.save(os.path.join(outdir,"y_pred.npy"),y_pred)
 np.save(os.path.join(outdir,"y_true.npy"),y_true)
 
