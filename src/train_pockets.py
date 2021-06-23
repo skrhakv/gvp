@@ -57,10 +57,10 @@ def main():
   # Test with best validation loss
     path = models_dir.format(str(model_id).zfill(3), str(epoch).zfill(3))
     load_checkpoint(model, optimizer, path)  
-    loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true = loop_func(testset, model, train=False, val=True)
+    loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true, meta_d = loop_func(testset, model, train=False, val=True)
     print('EPOCH TEST {:.4f} {:.4f}'.format(loss, acc))
     #util.save_confusion(confusion)
-    return loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true
+    return loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true, meta_d
     
     
 tp_metric = keras.metrics.TruePositives(name='tp')
@@ -86,10 +86,10 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
         auc_metric.reset_states()
     
     losses = []
-    y_pred, y_true, targets = [], [], []
+    y_pred, y_true, meta_d, targets = [], [], [], []
     batch_num = 0
     for batch in tqdm.tqdm(dataset):
-        X, S, y, M = batch
+        X, S, y, meta, M = batch
         if train:
             with tf.GradientTape() as tape:
                 prediction = model(X, S, M, train=True, res_level=True)
@@ -110,6 +110,9 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
                 y = tf.cast(y,tf.float32)
                 prediction = tf.gather_nd(prediction,indices=iis)
                 loss_value = loss_fn(y, prediction) 
+                #to be able to identify each y value with its protein and resid
+                meta_pairs = [(meta[ind[0]], ind[1]) for ind in iis]
+                meta_d.extend(meta_pairs)
             else:
                 prediction = model(X, S, M, train=False, res_level=True)
                 iis = choose_balanced_inds(y,40,10)
@@ -153,7 +156,7 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
         auc = auc_metric.result().numpy()
     
     if val:
-        return np.mean(losses), tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true
+        return np.mean(losses), tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true, meta_d
     else:
         return np.mean(losses)
 
@@ -214,8 +217,8 @@ def choose_balanced_inds(y,pos_thresh,neg_thresh):
 
     return iis
 
-loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true = main()
-outdir = "./metrics/net_8-50_1-32_16-100_50epoch_b4prot_protein-split2/"
+loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true, meta_d = main()
+outdir = "./metrics/net_8-50_1-32_16-100_50epoch_b4prot_TEM-VP35-wMeta/"
 print(outdir)
 os.mkdir(outdir)
 np.save(os.path.join(outdir,"loss.npy"),loss)
@@ -229,4 +232,4 @@ np.save(os.path.join(outdir,"recall.npy"),recall)
 np.save(os.path.join(outdir,"auc.npy"),auc)
 np.save(os.path.join(outdir,"y_pred.npy"),y_pred)
 np.save(os.path.join(outdir,"y_true.npy"),y_true)
-
+np.save(os.path.join(outdir,"meta_d.npy"),meta_d)
