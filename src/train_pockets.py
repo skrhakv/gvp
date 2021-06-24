@@ -29,13 +29,13 @@ def make_model():
     return model
 
 def main():
-    trainset, valset, testset = pockets_dataset(4)# batch size = N proteins
+    trainset, valset, testset = pockets_dataset(2)# batch size = N proteins
     optimizer = tf.keras.optimizers.Adam()
     model = make_model()
   
     model_id = int(datetime.timestamp(datetime.now()))
 
-    NUM_EPOCHS = 50
+    NUM_EPOCHS = 1
     loop_func = loop
     best_epoch, best_val = 0, np.inf
     
@@ -55,8 +55,10 @@ def main():
         #util.save_confusion(confusion)
 
   # Test with best validation loss
+    np.save("../models/mw_before_load.npy",model.weights)
     path = models_dir.format(str(model_id).zfill(3), str(epoch).zfill(3))
     load_checkpoint(model, optimizer, path)  
+    np.save("../models/mw_after_load.npy",model.weights)
     loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true, meta_d = loop_func(testset, model, train=False, val=True)
     print('EPOCH TEST {:.4f} {:.4f}'.format(loss, acc))
     #util.save_confusion(confusion)
@@ -218,7 +220,7 @@ def choose_balanced_inds(y,pos_thresh,neg_thresh):
     return iis
 
 loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true, meta_d = main()
-outdir = "./metrics/net_8-50_1-32_16-100_50epoch_b4prot_TEM-VP35-wMeta/"
+outdir = "./metrics/net_8-50_1-32_16-100_1epoch_b2prot_TEM-VP35-wMeta-saveWeights/"
 print(outdir)
 os.mkdir(outdir)
 np.save(os.path.join(outdir,"loss.npy"),loss)
