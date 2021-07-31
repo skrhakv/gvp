@@ -34,7 +34,7 @@ def main():
     model = make_model()
   
     model_id = int(datetime.timestamp(datetime.now()))
-
+    print(model_id)
     NUM_EPOCHS = 1
     loop_func = loop
     best_epoch, best_val = 0, np.inf
@@ -55,10 +55,8 @@ def main():
         #util.save_confusion(confusion)
 
   # Test with best validation loss
-    np.save("../models/mw_before_load.npy",model.weights)
-    path = models_dir.format(str(model_id).zfill(3), str(epoch).zfill(3))
+    path = models_dir.format(str(model_id).zfill(3), str(best_epoch).zfill(3))
     load_checkpoint(model, optimizer, path)  
-    np.save("../models/mw_after_load.npy",model.weights)
     loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true, meta_d = loop_func(testset, model, train=False, val=True)
     print('EPOCH TEST {:.4f} {:.4f}'.format(loss, acc))
     #util.save_confusion(confusion)
@@ -220,7 +218,7 @@ def choose_balanced_inds(y,pos_thresh,neg_thresh):
     return iis
 
 loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true, meta_d = main()
-outdir = "./metrics/net_8-50_1-32_16-100_1epoch_b2prot_TEM-VP35-wMeta-saveWeights/"
+outdir = "./metrics/net_8-50_1-32_16-100_1epoch_b2prot_crypto_plus_covid_TEM-1MY0-1BSQ-nsp5/"
 print(outdir)
 os.mkdir(outdir)
 np.save(os.path.join(outdir,"loss.npy"),loss)

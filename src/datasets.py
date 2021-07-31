@@ -13,16 +13,16 @@ DATA_DIR = "/project/bowmanlab/mdward/projects/FAST-pocket-pred/gvp/data"
 
 def pockets_dataset(batch_size):
     #will have [(xtc,pdb,index,residue,1/0),...]
-    X_train = np.load(os.path.join(DATA_DIR,"X_train-TEM-VP35.npy"))
-    y_train = np.load(os.path.join(DATA_DIR,"y_train-TEM-VP35.npy"),allow_pickle=True)
+    X_train = np.load(os.path.join(DATA_DIR,"X_train-TEM-1MY0-1BSQ-nsp5.npy"))
+    y_train = np.load(os.path.join(DATA_DIR,"y_train-TEM-1MY0-1BSQ-nsp5.npy"),allow_pickle=True)
     trainset = list(zip(X_train,y_train))   
 
-    X_validate = np.load(os.path.join(DATA_DIR,"X_validate-TEM-VP35.npy"))
-    y_validate = np.load(os.path.join(DATA_DIR,"y_validate-TEM-VP35.npy"),allow_pickle=True)
+    X_validate = np.load(os.path.join(DATA_DIR,"X_validate-TEM-1MY0-1BSQ-nsp5.npy"))
+    y_validate = np.load(os.path.join(DATA_DIR,"y_validate-TEM-1MY0-1BSQ-nsp5.npy"),allow_pickle=True)
     valset = list(zip(X_validate,y_validate))    
 
-    X_test = np.load(os.path.join(DATA_DIR,"X_test-TEM-VP35.npy"))
-    y_test = np.load(os.path.join(DATA_DIR,"y_test-TEM-VP35.npy"),allow_pickle=True)
+    X_test = np.load(os.path.join(DATA_DIR,"X_test-TEM-1MY0-1BSQ-nsp5.npy"))
+    y_test = np.load(os.path.join(DATA_DIR,"y_test-TEM-1MY0-1BSQ-nsp5.npy"),allow_pickle=True)
     testset = list(zip(X_test, y_test))    
 
     trainset = DynamicLoader(trainset, batch_size)
