@@ -23,21 +23,24 @@ from util import save_checkpoint, load_checkpoint
 
 models_dir = '../models/{}_{}'
 
-def make_model():
+def make_model(num_layers=3,dropout=0.1):
     #Emailed the lead author for what these values should be, these are good defaults.
-    model = MQAModel(node_features=(8,50), edge_features=(1,32), hidden_dim=(16,100))
+    model = MQAModel(node_features=(8,50), edge_features=(1,32), hidden_dim=(16,100),
+                         num_layers=num_layers, dropout=dropout)
     return model
 
+bs = 4
+lr = 0.0001
+num_layers = 3
+dropout = 0.1
+NUM_EPOCHS = 50
 def main():
-    bs = 2
     trainset, valset, testset = pockets_dataset(bs)# batch size = N proteins
-    print(bs)
-    optimizer = tf.keras.optimizers.Adam()
-    model = make_model()
+    optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+    model = make_model(num_layers=num_layers, dropout=dropout)
   
     model_id = int(datetime.timestamp(datetime.now()))
 
-    NUM_EPOCHS = 1
     loop_func = loop
     best_epoch, best_val = 0, np.inf
     
@@ -59,10 +62,10 @@ def main():
   # Test with best validation loss
     path = models_dir.format(str(model_id).zfill(3), str(epoch).zfill(3))
     load_checkpoint(model, optimizer, path)  
-    loss, y_pred, y_true = loop_func(testset, model, train=False, val=True)
+    loss, y_pred, y_true, meta_d = loop_func(testset, model, train=False, val=True)
     print('EPOCH TEST {:.4f}'.format(loss))
     #util.save_confusion(confusion)
-    return loss, y_pred, y_true
+    return loss, y_pred, y_true, meta_d
     
     
 tp_metric = keras.metrics.TruePositives(name='tp')
@@ -75,7 +78,8 @@ recall_metric = keras.metrics.Recall(name='recall')
 auc_metric = keras.metrics.AUC(name='auc')
     
 #loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=False)
-loss_fn = tf.keras.losses.MeanSquaredError()    
+#loss_fn = tf.keras.losses.MeanSquaredError()    
+loss_fn = tf.keras.losses.Huber()
 
 def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
     if val:
@@ -90,10 +94,10 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
         #auc_metric.reset_states()
     
     losses = []
-    y_pred, y_true, targets = [], [], []
+    y_pred, y_true, meta_d, targets = [], [], [], []
     batch_num = 0
     for batch in tqdm.tqdm(dataset):
-        X, S, y, M = batch
+        X, S, y, meta, M = batch
         if train:
             with tf.GradientTape() as tape:
                 prediction = model(X, S, M, train=True, res_level=True)
@@ -110,7 +114,7 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
             #print(y.numpy().shape)
         else:
             if val:
-                prediction = model(X, S, M, train=True, res_level=True)
+                prediction = model(X, S, M, train=False, res_level=True)
                 #iis = convert_test_targs(y,40,10)
                 iis = choose_regress_inds(y)
                 y = tf.gather_nd(y,indices=iis)
@@ -119,7 +123,7 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
                 prediction = tf.gather_nd(prediction,indices=iis)
                 loss_value = loss_fn(y, prediction) 
             else:
-                prediction = model(X, S, M, train=True, res_level=True)
+                prediction = model(X, S, M, train=False, res_level=True)
                 #iis = choose_balanced_inds(y,40,10)
                 iis = choose_regress_inds(y)
                 y = tf.gather_nd(y,indices=iis)
@@ -127,6 +131,8 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
                 #y = tf.cast(y,tf.float32)
                 prediction = tf.gather_nd(prediction,indices=iis)
                 loss_value = loss_fn(y, prediction)
+                meta_pairs = [(meta[ind[0]], ind[1]) for ind in iis]
+                meta_d.extend(meta_pairs)
         if train:
             assert(np.isfinite(float(loss_value)))
             grads = tape.gradient(loss_value, model.trainable_weights)
@@ -164,7 +170,7 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
         #auc = auc_metric.result().numpy()
     
     if val:
-        return np.mean(losses), y_pred, y_true
+        return np.mean(losses), y_pred, y_true, meta_d
     else:
         return np.mean(losses)
 
@@ -235,10 +241,12 @@ def choose_balanced_inds(y,pos_thresh,neg_thresh):
 
     return iis
 
-loss, y_pred, y_true = main()
-outdir = "./metrics/net_8-50_1-32_16-100_1epoch_b2prot_regression-test/"
+loss, y_pred, y_true, meta_d = main()
+outdir = "./metrics/net_8-50_1-32_16-100_%sepoch_b%sprot_regression_Huber_lr%s_gvp%s_drop%s_nsp10_nsp5/" % (NUM_EPOCHS, bs, lr, num_layers, dropout)
+print(outdir)
 os.mkdir(outdir)
 np.save(os.path.join(outdir,"loss.npy"),loss)
+np.save(os.path.join(outdir,"meta_d.npy"),meta_d)
 #np.save(os.path.join(outdir,"tp.npy"),tp)
 #np.save(os.path.join(outdir,"fp.npy"),fp)
 #np.save(os.path.join(outdir,"tn.npy"),tn)

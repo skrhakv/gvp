@@ -13,23 +13,23 @@ DATA_DIR = "/project/bowmanlab/mdward/projects/FAST-pocket-pred/gvp/data"
 
 def pockets_dataset(batch_size):
     #will have [(xtc,pdb,index,residue,1/0),...]
-    X_train = np.load(os.path.join(DATA_DIR,"X_train.npy"))
-    y_train = np.load(os.path.join(DATA_DIR,"y_train.npy"),allow_pickle=True)
+    X_train = np.load(os.path.join(DATA_DIR,"X_train-protein-split.npy"))
+    y_train = np.load(os.path.join(DATA_DIR,"y_train-protein-split.npy"),allow_pickle=True)
     trainset = list(zip(X_train,y_train))   
 
-    X_validate = np.load(os.path.join(DATA_DIR,"X_validate.npy"))
-    y_validate = np.load(os.path.join(DATA_DIR,"y_validate.npy"),allow_pickle=True)
+    X_validate = np.load(os.path.join(DATA_DIR,"X_validate-protein-split.npy"))
+    y_validate = np.load(os.path.join(DATA_DIR,"y_validate-protein-split.npy"),allow_pickle=True)
     valset = list(zip(X_validate,y_validate))    
 
-    X_test = np.load(os.path.join(DATA_DIR,"X_test.npy"))
-    y_test = np.load(os.path.join(DATA_DIR,"y_test.npy"),allow_pickle=True)
+    X_test = np.load(os.path.join(DATA_DIR,"X_test-protein-split.npy"))
+    y_test = np.load(os.path.join(DATA_DIR,"y_test-protein-split.npy"),allow_pickle=True)
     testset = list(zip(X_test, y_test))    
 
     trainset = DynamicLoader(trainset, batch_size)
     valset = DynamicLoader(valset, batch_size)
     testset = DynamicLoader(testset, batch_size)
     
-    output_types = (tf.float32, tf.int32, tf.int32, tf.float32)
+    output_types = (tf.float32, tf.int32, tf.int32, tf.string, tf.float32)
     trainset = tf.data.Dataset.from_generator(trainset.__iter__, output_types=output_types).prefetch(3)
     valset = tf.data.Dataset.from_generator(valset.__iter__, output_types=output_types).prefetch(3)
     testset = tf.data.Dataset.from_generator(testset.__iter__, output_types=output_types).prefetch(3)
@@ -54,7 +54,7 @@ def parse_batch(batch):
     # -1 so we can distinguish 0 pocket volume and padded indices later 
     y = np.zeros([B, L_max], dtype=np.int32)-1 
 
-    resids = []
+    meta = []
     for i,ex in enumerate(batch):
         x, targs = ex
         traj_fn, pdb_fn, traj_iis = x
@@ -72,13 +72,14 @@ def parse_batch(batch):
         X[i] = np.pad(xyz, [[0,L_max-l], [0,0], [0,0]],
                         'constant', constant_values=(np.nan, ))
         y[i, :l] = targs
-    
+        meta.append(x)    
+
     isnan = np.isnan(X)
     mask = np.isfinite(np.sum(X,(2,3))).astype(np.float32)
     X[isnan] = 0.
     X = np.nan_to_num(X)
         
-    return X, S, y, mask
+    return X, S, y, meta, mask
     
 class DynamicLoader(): 
     def __init__(self, dataset, batch_size=32, shuffle=True):
