@@ -1,4 +1,4 @@
 #!/bin/bash
 
-cd /project/bowmanlab/mdward/projects/FAST-pocket-pred/gvp/src/
-python train_pockets.py
+cd /project/bowmore/ameller/gvp/src/
+python train_pockets.py 2 3 40
