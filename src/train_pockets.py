@@ -16,6 +16,7 @@ def make_model():
     return model
 
 def main():
+
     trainset, valset, testset = pockets_dataset(BATCH_SIZE, FILESTEM, cv_fold) # batch size = N proteins
     optimizer = tf.keras.optimizers.Adam()
     model = make_model()
@@ -49,6 +50,7 @@ def main():
     np.save(f'{outdir}/cv_loss.npy', val_losses)
 
     load_checkpoint(model, optimizer, path)
+
     loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true, meta_d = loop_func(testset, model, train=False, val=True)
     print('EPOCH TEST {:.4f} {:.4f}'.format(loss, acc))
     #util.save_confusion(confusion)
@@ -201,7 +203,6 @@ def choose_balanced_inds(y):
         iis =[[0,0]]
 
     return iis
-
 
 
 ######### INPUTS ##########

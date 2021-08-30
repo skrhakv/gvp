@@ -59,7 +59,10 @@ def parse_batch(batch):
         x, targs = ex
         traj_fn, pdb_fn, traj_iis = x
         traj_iis = int(traj_iis)
+<<<<<<< HEAD
 
+=======
+>>>>>>> 4842e89ae7ef6b92be6efa76c7436ccd19292c96
         pdb = md.load(pdb_fn)
         struc = md.load_frame(traj_fn, traj_iis, top=pdb)
         prot_iis = struc.top.select("protein and (name N or name CA or name C or name O)")
@@ -78,7 +81,12 @@ def parse_batch(batch):
     mask = np.isfinite(np.sum(X, (2, 3))).astype(np.float32)
     X[isnan] = 0.
     X = np.nan_to_num(X)
+<<<<<<< HEAD
 
+=======
+    #np.save(os.path.join(DATA_DIR,"X.npy"),X) #Making sure featurization is same as in jupyter notebook
+    #np.save(os.path.join(DATA_DIR,"x.npy"),x)    
+>>>>>>> 4842e89ae7ef6b92be6efa76c7436ccd19292c96
     return X, S, y, meta, mask
 
 class DynamicLoader(): 
