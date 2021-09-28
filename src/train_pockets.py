@@ -18,7 +18,7 @@ def make_model():
 def main():
 
     trainset, valset, testset = pockets_dataset(BATCH_SIZE, FILESTEM, cv_fold) # batch size = N proteins
-    optimizer = tf.keras.optimizers.Adam()
+    optimizer = tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE)
     model = make_model()
 
     model_id = int(datetime.timestamp(datetime.now()))
@@ -26,14 +26,38 @@ def main():
     loop_func = loop
     best_epoch, best_val = 0, np.inf
 
+    # Calculate validation loss before any training
     val_losses = []
+    loss, auc, pr_auc, y_pred, y_true, meta_d = loop_func(valset, model, train=False, test=False)
+    val_losses.append(loss)
+    # Save out validation metrics before training
+    np.save(os.path.join(outdir, f"val_loss_pre_train.npy"), loss)
+    np.save(os.path.join(outdir, f"val_auc_pre_train.npy"), auc)
+    np.save(os.path.join(outdir, f"val_pr_auc_pre_train.npy"), pr_auc)
+    np.save(os.path.join(outdir, f"val_y_pred_pre_train.npy"), y_pred)
+    np.save(os.path.join(outdir, f"val_y_true_pre_train.npy"), y_true)
+    np.save(os.path.join(outdir, f"val_meta_d_pre_train.npy"), meta_d)
+
+    train_losses = []
+
     for epoch in range(NUM_EPOCHS):
         loss = loop_func(trainset, model, train=True, optimizer=optimizer)
+        train_losses.append(loss)
+
         print('EPOCH {} training loss: {}'.format(epoch, loss))
         save_checkpoint(model_path, model, optimizer, model_id, epoch)
         print('EPOCH {} TRAIN {:.4f}'.format(epoch, loss))
         #util.save_confusion(confusion)
-        loss = loop_func(valset, model, train=False, val=False)
+        loss, auc, pr_auc, y_pred, y_true, meta_d = loop_func(valset, model, train=False, test=False)
+
+        # Save out validation metrics for this epoch
+        np.save(os.path.join(outdir, f"val_loss_{epoch}.npy"), loss)
+        np.save(os.path.join(outdir, f"val_auc_{epoch}.npy"), auc)
+        np.save(os.path.join(outdir, f"val_pr_auc_{epoch}.npy"), pr_auc)
+        np.save(os.path.join(outdir, f"val_y_pred_{epoch}.npy"), y_pred)
+        np.save(os.path.join(outdir, f"val_y_true_{epoch}.npy"), y_true)
+        np.save(os.path.join(outdir, f"val_meta_d_{epoch}.npy"), meta_d)
+
         val_losses.append(loss)
         print(' EPOCH {} validation loss: {}'.format(epoch, loss))
         if loss < best_val:
@@ -46,19 +70,21 @@ def main():
     # Test with best validation loss
     path = model_path.format(str(model_id).zfill(3), str(best_epoch).zfill(3))
 
-    # Save out validation losses
+    # Save out training and validation losses
     np.save(f'{outdir}/cv_loss.npy', val_losses)
+    np.save(f'{outdir}/train_loss.npy', train_losses)
 
     load_checkpoint(model, optimizer, path)
 
-    loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true, meta_d = loop_func(testset, model, train=False, val=True)
+    loss, tp, fp, tn, fn, acc, prec, recall, auc, pr_auc, y_pred, y_true, meta_d = loop_func(testset, model, train=False, test=True)
     print('EPOCH TEST {:.4f} {:.4f}'.format(loss, acc))
     #util.save_confusion(confusion)
-    return loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true, meta_d
+    return loss, tp, fp, tn, fn, acc, prec, recall, auc, pr_auc, y_pred, y_true, meta_d
 
 
-def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
-    if val:
+def loop(dataset, model, train=False, optimizer=None, alpha=1, test=False):
+    # if running validation or testing
+    if test:
         tp_metric.reset_states()
         fp_metric.reset_states()
         tn_metric.reset_states()
@@ -67,6 +93,10 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
         prec_metric.reset_states()
         recall_metric.reset_states()
         auc_metric.reset_states()
+        pr_auc_metric.reset_states()
+    if not train and not test:
+        auc_metric.reset_states()
+        pr_auc_metric.reset_states()
 
     losses = []
     y_pred, y_true, meta_d, targets = [], [], [], []
@@ -79,7 +109,6 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
                 prediction = model(X, S, M, train=True, res_level=True)
                 #Grab balanced set of residues
                 iis = choose_balanced_inds(y)
-                # print(iis)
                 y = tf.gather_nd(y, indices=iis)
                 # print('Targets should be balanced: ', y)
                 y = y >= pos_thresh
@@ -87,25 +116,17 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
                 prediction = tf.gather_nd(prediction, indices=iis)
                 loss_value = loss_fn(y, prediction)
         else:
-            if val:
-                prediction = model(X, S, M, train=False, res_level=True)
-                iis = convert_test_targs(y)
-                y = tf.gather_nd(y, indices=iis)
-                y = y >= pos_thresh
-                y = tf.cast(y, tf.float32)
-                prediction = tf.gather_nd(prediction,indices=iis)
-                loss_value = loss_fn(y, prediction)
-                #to be able to identify each y value with its protein and resid
-                meta_pairs = [(meta[ind[0]], ind[1]) for ind in iis]
-                meta_d.extend(meta_pairs)
-            else:
-                prediction = model(X, S, M, train=False, res_level=True)
-                iis = choose_balanced_inds(y)
-                y = tf.gather_nd(y, indices=iis)
-                y = y >= pos_thresh
-                y = tf.cast(y, tf.float32)
-                prediction = tf.gather_nd(prediction,indices=iis)
-                loss_value = loss_fn(y, prediction)
+            # test and validation sets (select all examples except for intermediate values)    
+            prediction = model(X, S, M, train=False, res_level=True)
+            iis = convert_test_targs(y)
+            y = tf.gather_nd(y, indices=iis)
+            y = y >= pos_thresh
+            y = tf.cast(y, tf.float32)
+            prediction = tf.gather_nd(prediction, indices=iis)
+            loss_value = loss_fn(y, prediction)
+            #to be able to identify each y value with its protein and resid
+            meta_pairs = [(meta[ind[0]].numpy(), ind[1]) for ind in iis]
+            meta_d.extend(meta_pairs)
         if train:
             assert(np.isfinite(float(loss_value)))
             grads = tape.gradient(loss_value, model.trainable_weights)
@@ -119,20 +140,23 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
         y_pred.extend(prediction.numpy().tolist())
         y_true.extend(y.numpy().tolist())
 
-        if val:
-            y = tf.squeeze(y)
-            prediction = tf.squeeze(prediction)
-            tp_metric.update_state(y,prediction)
-            fp_metric.update_state(y,prediction)
-            tn_metric.update_state(y,prediction)
-            fn_metric.update_state(y,prediction)
-            acc_metric.update_state(y,prediction)
-            prec_metric.update_state(y,prediction)
-            recall_metric.update_state(y,prediction)
-            auc_metric.update_state(y,prediction)
+        if test:
+            tp_metric.update_state(y, prediction)
+            fp_metric.update_state(y, prediction)
+            tn_metric.update_state(y, prediction)
+            fn_metric.update_state(y, prediction)
+            acc_metric.update_state(y, prediction)
+            prec_metric.update_state(y, prediction)
+            recall_metric.update_state(y, prediction)
+            auc_metric.update_state(y, prediction)
+            pr_auc_metric.update_state(y, prediction)
+        # if validation
+        if not train and not test:
+            auc_metric.update_state(y, prediction)
+            pr_auc_metric.update_state(y, prediction)
 
         batch_num += 1
-    if val:
+    if test:
         tp = tp_metric.result().numpy()
         fp = fp_metric.result().numpy()
         tn = tn_metric.result().numpy()
@@ -141,11 +165,20 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1,val=False):
         prec = prec_metric.result().numpy()
         recall = recall_metric.result().numpy()
         auc = auc_metric.result().numpy()
+        pr_auc = pr_auc_metric.result().numpy()
+    # if validation
+    if not train and not test:
+        auc = auc_metric.result().numpy()
+        pr_auc = pr_auc_metric.result().numpy()
 
-    if val:
-        return np.mean(losses), tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true, meta_d
-    else:
+    if train:
         return np.mean(losses)
+    elif test:
+        return np.mean(losses), tp, fp, tn, fn, acc, prec, recall, auc, pr_auc, y_pred, y_true, meta_d
+    # validation call
+    else:
+        return np.mean(losses), auc, pr_auc, y_pred, y_true, meta_d
+
 
 def convert_test_targs(y):
     # Need to convert targs (volumes) to 1s and 0s but also discard
@@ -214,6 +247,7 @@ neg_thresh = 5
 
 ## Vary throughout task 1 training ##
 BATCH_SIZE = int(sys.argv[1])
+LEARNING_RATE = 0.0002 # default in tf is 0.001
 cv_fold = int(sys.argv[2])
 window = int(sys.argv[3])
 #####
@@ -225,7 +259,8 @@ featurization_method = 'gp-to-nearest-resi'
 outdir = (f"/project/bowmanlab/ameller/gvp/net_8-50_1-32_16-100_"
           f"feat_method_{featurization_method}_rank_{min_rank}_"
           f"pos{pos_thresh}_window_{window}ns_"
-          f"{NUM_EPOCHS}epoch_b{BATCH_SIZE}_cv_fold{cv_fold}_test_{test_string}/")
+          f"{NUM_EPOCHS}epoch_b{BATCH_SIZE}_lr{LEARNING_RATE}_"
+          f"cv_fold{cv_fold}_test_{test_string}/")
 ###########################
 
 print(outdir)
@@ -258,25 +293,27 @@ acc_metric = keras.metrics.BinaryAccuracy(name='accuracy')
 prec_metric = keras.metrics.Precision(name='precision')
 recall_metric = keras.metrics.Recall(name='recall')
 auc_metric = keras.metrics.AUC(name='auc')
+pr_auc_metric = keras.metrics.AUC(curve='PR', name='pr_auc')
 
 loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=False)
 ##################################
 
 ######## RUN TRAINING ############
-loss, tp, fp, tn, fn, acc, prec, recall, auc, y_pred, y_true, meta_d = main()
+loss, tp, fp, tn, fn, acc, prec, recall, auc, pr_auc, y_pred, y_true, meta_d = main()
 #################################
 
 ####### SAVE TEST RESULTS ########
-np.save(os.path.join(outdir,"loss.npy"),loss)
-np.save(os.path.join(outdir,"tp.npy"),tp)
-np.save(os.path.join(outdir,"fp.npy"),fp)
-np.save(os.path.join(outdir,"tn.npy"),tn)
-np.save(os.path.join(outdir,"fn.npy"),fn)
-np.save(os.path.join(outdir,"acc.npy"),acc)
-np.save(os.path.join(outdir,"prec.npy"),prec)
-np.save(os.path.join(outdir,"recall.npy"),recall)
-np.save(os.path.join(outdir,"auc.npy"),auc)
-np.save(os.path.join(outdir,"y_pred.npy"),y_pred)
-np.save(os.path.join(outdir,"y_true.npy"),y_true)
-np.save(os.path.join(outdir,"meta_d.npy"),meta_d)
+np.save(os.path.join(outdir,"test_loss.npy"), loss)
+np.save(os.path.join(outdir,"test_tp.npy"), tp)
+np.save(os.path.join(outdir,"test_fp.npy"), fp)
+np.save(os.path.join(outdir,"test_tn.npy"), tn)
+np.save(os.path.join(outdir,"test_fn.npy"), fn)
+np.save(os.path.join(outdir,"test_acc.npy"), acc)
+np.save(os.path.join(outdir,"test_prec.npy"), prec)
+np.save(os.path.join(outdir,"test_recall.npy"), recall)
+np.save(os.path.join(outdir,"test_auc.npy"), auc)
+np.save(os.path.join(outdir,"test_pr_auc.npy"), pr_auc)
+np.save(os.path.join(outdir,"test_y_pred.npy"), y_pred)
+np.save(os.path.join(outdir,"test_y_true.npy"), y_true)
+np.save(os.path.join(outdir,"test_meta_d.npy"), meta_d)
 ##################################
