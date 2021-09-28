@@ -1,4 +1,5 @@
 import os
+import threading
 
 import mlflow
 import optuna
@@ -23,7 +24,7 @@ featurization_method = 'gp-to-nearest-resi'
 stride = 1
 FILESTEM = f'{featurization_method}-min-rank-{min_rank}-window-{window}-stride-{stride}-test-{test_string}'
 # Output data directory
-outdir = "/project/bowmanlab/ameller/gvp/optuna/"
+outdir = f"/project/bowmanlab/ameller/gvp/optuna/{FILESTEM}"
 
 loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=False)
 
@@ -50,18 +51,48 @@ def main_cv(learning_rate, dropout_rate, num_layers, hidden_layers, cv_fold):
     best_epoch, best_val = 0, np.inf
     val_losses = []
 
+    # Maintain ROC AUC, PR AUC metrics throughout training
+    auc_metric = keras.metrics.AUC(name='auc')
+    pr_auc_metric = keras.metrics.AUC(curve='PR', name='pr_auc')
+
     for epoch in range(NUM_EPOCHS):
-        loss = loop_func(trainset, model, train=True, optimizer=optimizer)
-        print("EPOCH {} training loss: {}".format(epoch, loss))
-        loss = loop_func(valset, model, train=False, val=False)
+        loss, y_pred, y_true, meta_d = loop_func(trainset, model, train=True, optimizer=optimizer)
+        print("CV FOLD {} EPOCH {} training loss: {:.4f}".format(cv_fold, epoch, loss))
+        loss, y_pred, y_true, meta_d = loop_func(valset, model, train=False, val=False)
         val_losses.append(loss)
-        print(" EPOCH {} validation loss: {}".format(epoch, loss))
+        print("CV FOLD {} EPOCH {} validation loss: {:.4f}".format(cv_fold, epoch, loss))
         if loss < best_val:
             best_epoch, best_val = epoch, loss
-        print("EPOCH {} VAL {:.4f}".format(epoch, loss))
+
+        # Save out validation metrics for each epoch
+        auc_metric.update_state(y_true, y_pred)
+        pr_auc_metric.update_state(y_true, y_pred)
+
+        np.save(os.path.join(outdir,
+                             f"val_lr_{learning_rate}_dr_{dropout_rate}_nl_{num_layers}_hl_{hidden_layers}_loss_{epoch}.npy"),
+                loss)
+        np.save(os.path.join(outdir,
+                             f"val_lr_{learning_rate}_dr_{dropout_rate}_nl_{num_layers}_hl_{hidden_layers}_auc_{epoch}.npy"),
+                auc_metric.result().numpy())
+        np.save(os.path.join(outdir,
+                             f"val_lr_{learning_rate}_dr_{dropout_rate}_nl_{num_layers}_hl_{hidden_layers}_pr_auc_{epoch}.npy"),
+                pr_auc_metric.result().numpy())
+        np.save(os.path.join(outdir,
+                             f"val_lr_{learning_rate}_dr_{dropout_rate}_nl_{num_layers}_hl_{hidden_layers}_y_pred_{epoch}.npy"),
+                y_pred)
+        np.save(os.path.join(outdir,
+                             f"val_lr_{learning_rate}_dr_{dropout_rate}_nl_{num_layers}_hl_{hidden_layers}_y_true_{epoch}.npy"),
+                y_true)
+        np.save(os.path.join(outdir,
+                             f"val_lr_{learning_rate}_dr_{dropout_rate}_nl_{num_layers}_hl_{hidden_layers}_meta_d_{epoch}.npy"),
+                meta_d)
+
+        auc_metric.reset_state()
+        pr_auc_metric.reset_state()
 
     # Save out validation losses
-    np.save(f"{outdir}/{cv_fold}_cv_loss.npy", val_losses)
+    np.save(f"{outdir}/cv_fold{cv_fold}_val_lr_{learning_rate}_dr_{dropout_rate}_nl_{num_layers}_hl_{hidden_layers}_cv_loss.npy",
+            val_losses)
 
     return best_val
 
@@ -94,6 +125,9 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1, val=False):
             y = tf.cast(y, tf.float32)
             prediction = tf.gather_nd(prediction, indices=iis)
             loss_value = loss_fn(y, prediction)
+            #to be able to identify each y value with its protein and resid
+            meta_pairs = [(meta[ind[0]].numpy(), ind[1]) for ind in iis]
+            meta_d.extend(meta_pairs)
         if train:
             assert np.isfinite(float(loss_value))
             grads = tape.gradient(loss_value, model.trainable_weights)
@@ -105,7 +139,7 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1, val=False):
 
         batch_num += 1
 
-    return np.mean(losses)
+    return np.mean(losses), y_pred, y_true, meta_d
 
 
 def convert_test_targs(y):
@@ -175,41 +209,56 @@ def mlflow_callback(study, trial):
         mlflow.log_metrics({"loss": trial_value})
 
 
-def train_function(train_op, results, sess, cv_fold):
+def train_function(learning_rate, dropout_rate, num_layers, hidden_layers, cv_fold, results):
     '''
         Callable object that is run by a thread
         train_op : a callable function passed to tf Session
         results : dictionary storing cv loss for multiple threads
     '''
-    cv_loss = sess.run(train_op)
-    results[cv_fold] = cv_loss
+    with tf.device("/gpu:%d" % cv_fold):
+        # This print is likely printing gpu device 0 in all cases
+        # Returns the name of a GPU device if available or the empty string
+        print(f'running training for {cv_fold} using {tf.test.gpu_device_name()}')
+        cv_loss = main_cv(
+            learning_rate=learning_rate,
+            dropout_rate=dropout_rate,
+            num_layers=num_layers,
+            hidden_layers=hidden_layers,
+            cv_fold=cv_fold,)
+        results[cv_fold] = cv_loss
 
 
 def objective(trial):
     "Defines objective function for optuna, uses mean best vallidation loss across folds"
 
-    learning_rate = trial.suggest_loguniform("lr", 1e-4, 1e-2)
-    dropout_rate = trial.suggest_loguniform("dropout", 1e-4, 1e-2)
+    # similar to the original gvp paper
+    # lowered learning rate min to reflect improved performance at lower learning rates
+    # increased dropout rate max since the default is 0.1 in MQAModel
+    # Also note that the hidden layers here refers to the number of hidden channels to use
+    # for the scalar embedding. This does not apply to the hidden dimension
+    # of the vector embedding which is currently set to a constant of 16.
+    learning_rate = trial.suggest_loguniform("lr", 5e-5, 1e-2)
+    dropout_rate = trial.suggest_loguniform("dropout", 1e-4, 2e-1)
     num_layers = trial.suggest_categorical("num_layers", [3, 4, 5, 6])
     hidden_layers = trial.suggest_categorical("hid_layers", [50, 100, 200])
 
-    loss = np.inf
+    # loss = np.inf
 
-    sess = tf.compat.v1.Session()
+    # sess = tf.compat.v1.Session()
 
-    "This loops computes loss from cross validation, alternatively you can use simply a single test splits, this is done in the GVP paper"
-    train_ops = []
-    for cv_fold in range(0, 5):
-        "Here parallelize training by sending to different GPUs."
-        with tf.device("/gpu:%d" % cv_fold):
-            train_ops.append(
-                main_cv(
-                    learning_rate=learning_rate,
-                    dropout_rate=dropout_rate,
-                    num_layers=num_layers,
-                    hidden_layers=hidden_layers,
-                    cv_fold=cv_fold,)
-            )
+    # "This loops computes loss from cross validation, alternatively you can use simply a single test splits, this is done in the GVP paper"
+    # train_ops = []
+    # for cv_fold in range(0, 5):
+    #     "Here parallelize training by sending to different GPUs."
+    #     with tf.device("/gpu:%d" % cv_fold):
+    #         train_ops.append(
+    #             main_cv(
+    #                 learning_rate=learning_rate,
+    #                 dropout_rate=dropout_rate,
+    #                 num_layers=num_layers,
+    #                 hidden_layers=hidden_layers,
+    #                 cv_fold=cv_fold,)
+    #         )
             # loss = main_cv(
             #     learning_rate=learning_rate,
             #     dropout_rate=dropout_rate,
@@ -227,9 +276,11 @@ def objective(trial):
     cv_losses = {}
 
     train_threads = []
-    for cv_fold, train_op in enumerate(train_ops):
+    for cv_fold in range(5):
         train_threads.append(threading.Thread(target=train_function,
-                                              args=(train_op, results, sess, cv_fold)))
+                                              args=(learning_rate, dropout_rate,
+                                                    num_layers, hidden_layers,
+                                                    cv_fold, cv_losses)))
 
     # Start threads and block on their completion
     for t in train_threads:
