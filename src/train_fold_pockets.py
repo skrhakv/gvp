@@ -35,7 +35,7 @@ def main():
     model_id = int(datetime.timestamp(datetime.now()))
 
     loop_func = loop
-    best_epoch, best_val, best_auc = 0, np.inf, np.inf
+    best_epoch, best_val, best_auc = 0, np.inf, 0
     val_losses = []
     train_losses = []
 
@@ -77,6 +77,7 @@ def main():
             best_epoch, best_auc = epoch, auc
 
     # Test with best validation loss
+    print(f'Best AUC is in epoch {best_epoch}')
     path = model_path.format(str(model_id).zfill(3), str(best_epoch).zfill(3))
 
     # Save out training and validation losses
@@ -144,7 +145,6 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1, test=False,
                         # Convert tensors of shape (n,) to (1xn)
                         prediction = tf.expand_dims(prediction, 1)
                         y = tf.expand_dims(y, 1)
-                        print(weights)
                         loss_value = loss_fn(y, prediction, sample_weight=weights)
                     else:
                         loss_value = loss_fn(y, prediction)
