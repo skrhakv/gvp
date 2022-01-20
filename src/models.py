@@ -9,20 +9,24 @@ from gvp import *
 
 class MQAModel(Model):
     def __init__(self, node_features, edge_features,
-        hidden_dim, num_layers=3, k_neighbors=30, dropout=0.1):
+        hidden_dim, num_layers=3, k_neighbors=30, dropout=0.1,
+        regression=False, multiclass=False):
             
         super(MQAModel, self).__init__()
         
+        # Model typee
+        self.multiclass = multiclass
+
         # Hyperparameters
         self.nv, self.ns = node_features
         self.hv, self.hs = hidden_dim
         self.ev, self.es = edge_features
-        
+
         # Featurization layers
         self.features = StructuralFeatures(node_features, edge_features, top_k=k_neighbors)
-    
+
         # Embedding layers
-        self.W_s = Embedding(20, self.hs)        
+        self.W_s = Embedding(20, self.hs)
         self.W_v = GVP(vi=self.nv, vo=self.hv, so=self.hs,
                         nls=None, nlv=None)
         self.W_e = GVP(vi=self.ev, vo=self.ev, so=self.hs,
@@ -32,16 +36,34 @@ class MQAModel(Model):
                                 dropout=dropout)
                                 
         self.W_V_out = GVP(vi=self.hv, vo=0, so=self.hs,
-                          nls=None, nlv=None)
-        
-        self.dense = Sequential([
-            Dense(2 * self.hs, activation='relu'),
-            Dropout(rate=dropout),
-            Dense(2 * self.hs, activation='relu'),
-            Dropout(rate=dropout),
-            LayerNormalization(),
-            Dense(1, activation='sigmoid')])
-        
+                           nls=None, nlv=None)
+
+        if regression:
+            self.dense = Sequential([
+                Dense(2 * self.hs, activation='relu'),
+                Dropout(rate=dropout),
+                Dense(2 * self.hs, activation='relu'),
+                Dropout(rate=dropout),
+                LayerNormalization(),
+                Dense(1, activation=None)])
+        elif multiclass:
+            self.multiclass = True
+            self.dense = Sequential([
+                Dense(2 * self.hs, activation='relu'),
+                Dropout(rate=dropout),
+                Dense(2 * self.hs, activation='relu'),
+                Dropout(rate=dropout),
+                LayerNormalization(),
+                Dense(3, activation='softmax')])
+        else:
+            self.dense = Sequential([
+                Dense(2 * self.hs, activation='relu'),
+                Dropout(rate=dropout),
+                Dense(2 * self.hs, activation='relu'),
+                Dropout(rate=dropout),
+                LayerNormalization(),
+                Dense(1, activation='sigmoid')])
+
     def call(self, X, S, mask, train=False, res_level=False):
         # X [B, N, 4, 3], S [B, N], mask [B, N]
 
@@ -63,8 +85,11 @@ class MQAModel(Model):
             h_V_out = tf.math.divide_no_nan(h_V_out, tf.math.reduce_sum(mask, -2)) # [B, D]
         out = h_V_out
         #out = self.dense(out, training=train)
-        out = tf.squeeze(self.dense(out, training=train), -1)# + 0.5 # [B]
-        
+        if self.multiclass:
+            out = self.dense(out, training=train) # [B, N, 3]
+        else:
+            out = tf.squeeze(self.dense(out, training=train), -1) # + 0.5 # [B, N]
+
         return out
 
 class CPDModel(Model):
@@ -85,7 +110,7 @@ class CPDModel(Model):
                         nls=None, nlv=None)
         self.W_e = GVP(vi=self.ev, vo=self.ev, so=self.hs,
                         nls=None, nlv=None)
-        self.W_s = Embedding(num_letters, self.hs)        
+        self.W_s = Embedding(num_letters, self.hs)
         self.encoder = Encoder(hidden_dim, edge_features, num_layers=num_layers)
         self.decoder = Decoder(hidden_dim, edge_features, s_features=(0, self.hs), num_layers=num_layers)
         self.W_out = GVP(vi=self.hv, vo=0, so=num_letters,

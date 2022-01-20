@@ -9,20 +9,55 @@ import os
 abbrev = {"ALA" : "A" , "ARG" : "R" , "ASN" : "N" , "ASP" : "D" , "CYS" : "C" , "CYM" : "C", "GLU" : "E" , "GLN" : "Q" , "GLY" : "G" , "HIS" : "H" , "ILE" : "I" , "LEU" : "L" , "LYS" : "K" , "MET" : "M" , "PHE" : "F" , "PRO" : "P" , "SER" : "S" , "THR" : "T" , "TRP" : "W" , "TYR" : "Y" , "VAL" : "V"}
 lookup = {'C': 4, 'D': 3, 'S': 15, 'Q': 5, 'K': 11, 'I': 9, 'P': 14, 'T': 16, 'F': 13, 'A': 0, 'G': 7, 'H': 8, 'E': 6, 'L': 10, 'R': 1, 'W': 17, 'V': 19, 'N': 2, 'Y': 18, 'M': 12}
 
-DATA_DIR = "/project/bowmore/ameller/gvp/data"
+DATA_DIR = "/project/bowmore/ameller/gvp/data/5-fold-cv/"
 
-def pockets_dataset(batch_size, filestem, cv_fold):
+def determine_global_weights(filestem, positive_cutoff, negative_cutoff):
+    y_train = np.load(os.path.join(DATA_DIR, f"y-train-{filestem}.npy"),allow_pickle=True)
+    all_examples = np.concatenate(y_train)
+    number_positive_examples = np.sum(all_examples >= positive_cutoff)
+    number_negative_examples = np.sum(all_examples < negative_cutoff)
+    total_examples = number_positive_examples + number_negative_examples
+    positive_weight = 1 / number_positive_examples * (total_examples / 2.0)
+    negative_weight = 1 / number_negative_examples * (total_examples / 2.0)
+    return positive_weight, negative_weight
+
+def pockets_dataset_fold(batch_size, filestem):
     #will have [(xtc,pdb,index,residue,1/0),...]
-    X_train = np.load(os.path.join(DATA_DIR, f"X-train-{filestem}-cv-fold-{cv_fold}.npy"))
-    y_train = np.load(os.path.join(DATA_DIR, f"y-train-{filestem}-cv-fold-{cv_fold}.npy"),allow_pickle=True)
+    X_train = np.load(os.path.join(DATA_DIR, f"X-train-{filestem}.npy"))
+    y_train = np.load(os.path.join(DATA_DIR, f"y-train-{filestem}.npy"),allow_pickle=True)
     trainset = list(zip(X_train,y_train))
 
-    X_validate = np.load(os.path.join(DATA_DIR, f"X-val-{filestem}-cv-fold-{cv_fold}.npy"))
-    y_validate = np.load(os.path.join(DATA_DIR, f"y-val-{filestem}-cv-fold-{cv_fold}.npy"),allow_pickle=True)
+    X_validate = np.load(os.path.join(DATA_DIR, f"X-val-{filestem}.npy"))
+    y_validate = np.load(os.path.join(DATA_DIR, f"y-val-{filestem}.npy"),allow_pickle=True)
     valset = list(zip(X_validate,y_validate))
 
     X_test = np.load(os.path.join(DATA_DIR, f"X-test-{filestem}.npy"))
     y_test = np.load(os.path.join(DATA_DIR, f"y-test-{filestem}.npy"),allow_pickle=True)
+    testset = list(zip(X_test, y_test))
+
+    trainset = DynamicLoader(trainset, batch_size)
+    valset = DynamicLoader(valset, batch_size)
+    testset = DynamicLoader(testset, batch_size)
+
+    output_types = (tf.float32, tf.int32, tf.int32, tf.string, tf.float32)
+    trainset = tf.data.Dataset.from_generator(trainset.__iter__, output_types=output_types).prefetch(3)
+    valset = tf.data.Dataset.from_generator(valset.__iter__, output_types=output_types).prefetch(3)
+    testset = tf.data.Dataset.from_generator(testset.__iter__, output_types=output_types).prefetch(3)
+
+    return trainset, valset, testset
+
+def pockets_dataset(batch_size, filestem):
+    #will have [(xtc,pdb,index,residue,1/0),...]
+    X_train = np.load(os.path.join(DATA_DIR, f"train-test-split/X-train-{filestem}.npy"))
+    y_train = np.load(os.path.join(DATA_DIR, f"train-test-split/y-train-{filestem}.npy"),allow_pickle=True)
+    trainset = list(zip(X_train,y_train))
+
+    X_validate = np.load(os.path.join(DATA_DIR, f"train-test-split/X-val-{filestem}.npy"))
+    y_validate = np.load(os.path.join(DATA_DIR, f"train-test-split/y-val-{filestem}.npy"),allow_pickle=True)
+    valset = list(zip(X_validate,y_validate))
+
+    X_test = np.load(os.path.join(DATA_DIR, f"train-test-split/X-test-{filestem}.npy"))
+    y_test = np.load(os.path.join(DATA_DIR, f"train-test-split/y-test-{filestem}.npy"),allow_pickle=True)
     testset = list(zip(X_test, y_test))
 
     trainset = DynamicLoader(trainset, batch_size)

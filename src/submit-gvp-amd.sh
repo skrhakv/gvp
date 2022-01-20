@@ -7,15 +7,14 @@
 #BSUB -e logs/training-%J.log
 
 # things to do before Singularity
-sleep $[ ( $RANDOM % 30 )  + 10 ]s
-sleep $[ ($RANDOM % 10) + ($RANDOM % 6) ]s
+# sleep 7m
 export HIP_VISIBLE_DEVICES=$(/opt/rocm-common/bin/find_rocm.sh -n 1)
 date
 hostname
 echo "HIP ROCM REQUESTS $HIP_VISIBLE_DEVICES"
 
 #The Singularity run
-singularity exec --no-home -H /project/bowmanlab/ameller/tf-singularity-home/ -B /project:/project /project/bowmanlab/rocm/tensorflow-rocm.sif /bin/bash /project/bowmore/ameller/gvp/src/train-submit-amd.sh
+singularity exec --no-home -H /project/bowmanlab/ameller/tf-singularity-home/ -B /project:/project /project/bowmanlab/rocm/tensorflow-rocm.sif /bin/bash /project/bowmore/ameller/gvp/src/run-fold.sh
 
 #Things to do after singularity
 echo Done

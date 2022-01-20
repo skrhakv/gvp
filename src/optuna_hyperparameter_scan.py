@@ -1,28 +1,34 @@
 import os
-import threading
 
+import threading
+import random
 import mlflow
 import optuna
 import tensorflow as tf
 from tensorflow import keras as keras
+import sys
 
 from datasets import *
 from models import *
 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
+
 NUM_EPOCHS = 20
-pos_thresh = 20
-neg_thresh = 5
+pos_thresh = 116
+neg_thresh = 116
+BATCH_SIZE = 1
 
 ## Vary throughout task 1 training ##
-BATCH_SIZE = 1
-window = 10
+window = 40
+fold = int(sys.argv[1])
 
 # Input data specs
-min_rank = 6
-test_string = 'TEM-1MY0-1BSQ-nsp5-il6'
-featurization_method = 'gp-to-nearest-resi'
+min_rank = 7
 stride = 1
-FILESTEM = f'{featurization_method}-min-rank-{min_rank}-window-{window}-stride-{stride}-test-{test_string}'
+featurization_method = 'nearby-pv-procedure'
+
+
+FILESTEM = f'{featurization_method}-min-rank-{min_rank}-window-{window}-stride-{stride}-cv-fold-{fold}'
 # Output data directory
 outdir = f"/project/bowmanlab/ameller/gvp/optuna/{FILESTEM}"
 
@@ -39,16 +45,16 @@ def make_model(dropout_rate, num_layers, hidden_dim):
     return model
 
 
-def main_cv(learning_rate, dropout_rate, num_layers, hidden_layers, cv_fold):
+def main_cv(learning_rate, dropout_rate, num_layers, hidden_layers):
 
-    trainset, valset, testset = pockets_dataset(BATCH_SIZE, FILESTEM, cv_fold)
+    trainset, valset, testset = pockets_dataset_fold(BATCH_SIZE, FILESTEM)
     optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
     model = make_model(
         dropout_rate=dropout_rate, num_layers=num_layers, hidden_dim=(16, hidden_layers)
     )
 
     loop_func = loop
-    best_epoch, best_val = 0, np.inf
+    best_epoch, best_val, best_auc = 0, np.inf, np.inf
     val_losses = []
 
     # Maintain ROC AUC, PR AUC metrics throughout training
@@ -57,44 +63,61 @@ def main_cv(learning_rate, dropout_rate, num_layers, hidden_layers, cv_fold):
 
     for epoch in range(NUM_EPOCHS):
         loss, y_pred, y_true, meta_d = loop_func(trainset, model, train=True, optimizer=optimizer)
-        print("CV FOLD {} EPOCH {} training loss: {:.4f}".format(cv_fold, epoch, loss))
+        print("CV FOLD {} EPOCH {} training loss: {:.4f}".format(fold, epoch, loss))
         loss, y_pred, y_true, meta_d = loop_func(valset, model, train=False, val=False)
         val_losses.append(loss)
-        print("CV FOLD {} EPOCH {} validation loss: {:.4f}".format(cv_fold, epoch, loss))
+        print("CV FOLD {} EPOCH {} validation loss: {:.4f}".format(fold, epoch, loss))
         if loss < best_val:
-            best_epoch, best_val = epoch, loss
+            best_val = loss
+            # best_epoch, best_val = epoch, loss
 
         # Save out validation metrics for each epoch
         auc_metric.update_state(y_true, y_pred)
         pr_auc_metric.update_state(y_true, y_pred)
 
+        current_auc = auc_metric.result().numpy()
+        if current_auc < best_auc:
+            best_epoch, best_auc = epoch, current_auc
+
         np.save(os.path.join(outdir,
-                             f"val_lr_{learning_rate}_dr_{dropout_rate}_nl_{num_layers}_hl_{hidden_layers}_loss_{epoch}.npy"),
+                             f"val_lr_{learning_rate:.5f}_"
+                             f"dr_{dropout_rate:.5f}_nl_{num_layers}_"
+                             f"hl_{hidden_layers}_loss_{epoch}.npy"),
                 loss)
         np.save(os.path.join(outdir,
-                             f"val_lr_{learning_rate}_dr_{dropout_rate}_nl_{num_layers}_hl_{hidden_layers}_auc_{epoch}.npy"),
+                             f"val_lr_{learning_rate:.5f}_"
+                             f"dr_{dropout_rate:.5f}_nl_{num_layers}_"
+                             f"hl_{hidden_layers}_auc_{epoch}.npy"),
                 auc_metric.result().numpy())
         np.save(os.path.join(outdir,
-                             f"val_lr_{learning_rate}_dr_{dropout_rate}_nl_{num_layers}_hl_{hidden_layers}_pr_auc_{epoch}.npy"),
+                             f"val_lr_{learning_rate:.5f}_"
+                             f"dr_{dropout_rate:.5f}_nl_{num_layers}_"
+                             f"hl_{hidden_layers}_pr_auc_{epoch}.npy"),
                 pr_auc_metric.result().numpy())
         np.save(os.path.join(outdir,
-                             f"val_lr_{learning_rate}_dr_{dropout_rate}_nl_{num_layers}_hl_{hidden_layers}_y_pred_{epoch}.npy"),
+                             f"val_lr_{learning_rate:.5f}_"
+                             f"dr_{dropout_rate:.5f}_nl_{num_layers}_"
+                             f"hl_{hidden_layers}_y_pred_{epoch}.npy"),
                 y_pred)
         np.save(os.path.join(outdir,
-                             f"val_lr_{learning_rate}_dr_{dropout_rate}_nl_{num_layers}_hl_{hidden_layers}_y_true_{epoch}.npy"),
+                             f"val_lr_{learning_rate:.5f}_"
+                             f"dr_{dropout_rate:.5f}_nl_{num_layers}_"
+                             f"hl_{hidden_layers}_y_true_{epoch}.npy"),
                 y_true)
         np.save(os.path.join(outdir,
-                             f"val_lr_{learning_rate}_dr_{dropout_rate}_nl_{num_layers}_hl_{hidden_layers}_meta_d_{epoch}.npy"),
+                             f"val_lr_{learning_rate:.5f}_"
+                             f"dr_{dropout_rate:.5f}_nl_{num_layers}_"
+                             f"hl_{hidden_layers}_meta_d_{epoch}.npy"),
                 meta_d)
 
-        auc_metric.reset_state()
-        pr_auc_metric.reset_state()
+        auc_metric.reset_states()
+        pr_auc_metric.reset_states()
 
     # Save out validation losses
-    np.save(f"{outdir}/cv_fold{cv_fold}_val_lr_{learning_rate}_dr_{dropout_rate}_nl_{num_layers}_hl_{hidden_layers}_cv_loss.npy",
+    np.save(f"{outdir}/val_lr_{learning_rate:.5f}_dr_{dropout_rate:.5f}_nl_{num_layers}_hl_{hidden_layers}_cv_loss.npy",
             val_losses)
 
-    return best_val
+    return best_auc
 
 
 def loop(dataset, model, train=False, optimizer=None, alpha=1, val=False):
@@ -146,7 +169,7 @@ def convert_test_targs(y):
     # Need to convert targs (volumes) to 1s and 0s but also discard
     # intermediate values
     iis_pos = [np.where(np.array(i) >= pos_thresh)[0] for i in y]
-    iis_neg = [np.where((np.array(i) < neg_thresh) & (np.array(i) >= 0))[0] for i in y]
+    iis_neg = [np.where(np.array(i) < neg_thresh)[0] for i in y]
     iis = []
     count = 0
     for i, j in zip(iis_pos, iis_neg):
@@ -163,7 +186,7 @@ def convert_test_targs(y):
 
 def choose_balanced_inds(y):
     iis_pos = [np.where(np.array(i) >= pos_thresh)[0] for i in y]
-    iis_neg = [np.where((np.array(i) < neg_thresh) & (np.array(i) > -1))[0] for i in y]
+    iis_neg = [np.where(np.array(i) < neg_thresh)[0] for i in y]
     count = 0
     iis = []
     for i, j in zip(iis_pos, iis_neg):
@@ -193,10 +216,13 @@ def choose_balanced_inds(y):
                 iis.append(pair)
 
         count += 1
-    # hacky way to deal with situation when there are no positive examples (or negative)
+    # select a random residue when there are no positive examples (or negative)
     # for a given structure
     if len(iis) == 0:
-        iis = [[0, 0]]
+        # if there are multiple structures in batch simply use the first
+        iis = [[0, random.choice(range(len(y[0])))]]
+        # print(f'selected random resid {iis[0][1]}')
+        # iis = [[0, 0]]
 
     return iis
 
@@ -209,25 +235,6 @@ def mlflow_callback(study, trial):
         mlflow.log_metrics({"loss": trial_value})
 
 
-def train_function(learning_rate, dropout_rate, num_layers, hidden_layers, cv_fold, results):
-    '''
-        Callable object that is run by a thread
-        train_op : a callable function passed to tf Session
-        results : dictionary storing cv loss for multiple threads
-    '''
-    with tf.device("/gpu:%d" % cv_fold):
-        # This print is likely printing gpu device 0 in all cases
-        # Returns the name of a GPU device if available or the empty string
-        print(f'running training for {cv_fold} using {tf.test.gpu_device_name()}')
-        cv_loss = main_cv(
-            learning_rate=learning_rate,
-            dropout_rate=dropout_rate,
-            num_layers=num_layers,
-            hidden_layers=hidden_layers,
-            cv_fold=cv_fold,)
-        results[cv_fold] = cv_loss
-
-
 def objective(trial):
     "Defines objective function for optuna, uses mean best vallidation loss across folds"
 
@@ -237,59 +244,21 @@ def objective(trial):
     # Also note that the hidden layers here refers to the number of hidden channels to use
     # for the scalar embedding. This does not apply to the hidden dimension
     # of the vector embedding which is currently set to a constant of 16.
-    learning_rate = trial.suggest_loguniform("lr", 5e-5, 1e-2)
-    dropout_rate = trial.suggest_loguniform("dropout", 1e-4, 2e-1)
-    num_layers = trial.suggest_categorical("num_layers", [3, 4, 5, 6])
-    hidden_layers = trial.suggest_categorical("hid_layers", [50, 100, 200])
+    learning_rate = trial.suggest_loguniform("lr", 5e-5, 1e-3)
+    dropout_rate = trial.suggest_loguniform("dropout", 5e-2, 3e-1)
+    num_layers = trial.suggest_categorical("num_layers", [4])
+    hidden_layers = trial.suggest_categorical("hid_layers", [50, 75, 100])
 
-    # loss = np.inf
+    print(f'running trial with learning rate: {learning_rate: .4f}, dropout rate: {dropout_rate: .4f}'
+          f', number of layers: {num_layers}, and hidden layers: {hidden_layers}')
 
-    # sess = tf.compat.v1.Session()
+    best_auc = main_cv(
+        learning_rate=learning_rate,
+        dropout_rate=dropout_rate,
+        num_layers=num_layers,
+        hidden_layers=hidden_layers)
 
-    # "This loops computes loss from cross validation, alternatively you can use simply a single test splits, this is done in the GVP paper"
-    # train_ops = []
-    # for cv_fold in range(0, 5):
-    #     "Here parallelize training by sending to different GPUs."
-    #     with tf.device("/gpu:%d" % cv_fold):
-    #         train_ops.append(
-    #             main_cv(
-    #                 learning_rate=learning_rate,
-    #                 dropout_rate=dropout_rate,
-    #                 num_layers=num_layers,
-    #                 hidden_layers=hidden_layers,
-    #                 cv_fold=cv_fold,)
-    #         )
-            # loss = main_cv(
-            #     learning_rate=learning_rate,
-            #     dropout_rate=dropout_rate,
-            #     num_layers=num_layers,
-            #     hidden_layers=hidden_layers,
-            #     cv_fold=cv_fold,
-            # )
-            # cv_losses.append(loss)
-
-
-    # Create multiple training threads
-
-    # need a mutable object to pass to thread constructor
-    # that can store results of training run
-    cv_losses = {}
-
-    train_threads = []
-    for cv_fold in range(5):
-        train_threads.append(threading.Thread(target=train_function,
-                                              args=(learning_rate, dropout_rate,
-                                                    num_layers, hidden_layers,
-                                                    cv_fold, cv_losses)))
-
-    # Start threads and block on their completion
-    for t in train_threads:
-        t.start()
-    for t in train_threads:
-        t.join()
-
-    # Returns mean val loss across CV folds
-    return np.mean([loss for loss in cv_losses.values()])
+    return best_auc
 
 
 if __name__ == "__main__":
@@ -311,7 +280,7 @@ if __name__ == "__main__":
             print(e)
 
     study = optuna.create_study()
-    study.optimize(objective, n_trials=15, callbacks=[mlflow_callback])
+    study.optimize(objective, n_trials=10, callbacks=[mlflow_callback])
 
     print("Number of finished trials: {}".format(len(study.trials)))
 
