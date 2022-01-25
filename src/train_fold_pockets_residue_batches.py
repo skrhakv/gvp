@@ -12,6 +12,11 @@ import random
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 
+# utility method for splitting lists
+def split(a, n):
+    k, m = divmod(len(a), n)
+    return (a[i*k+min(i, m):(i+1)*k+min(i+1, m)] for i in range(n))
+
 def make_model():
     #Emailed the lead author for what these values should be, these are good defaults.
     model = MQAModel(node_features=(8, 50), edge_features=(1, 32),
@@ -121,36 +126,52 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1, test=False,
     for batch in dataset:
         X, S, y, meta, M = batch
         if train:
-            with tf.GradientTape() as tape:
-                prediction = model(X, S, M, train=True, res_level=True)
-                if balance_classes:
-                    # Grab balanced set of residues
-                    if undersample:
-                        iis = choose_balanced_inds_undersampling(y)
-                    if oversample:
-                        iis = choose_balanced_inds_oversampling(y)
-                    y = tf.gather_nd(y, indices=iis)
-                    y = y >= pos_thresh
-                    y = tf.cast(y, tf.float32)
-                    prediction = tf.gather_nd(prediction, indices=iis)
-                    loss_value = loss_fn(y, prediction)
+            if balance_classes:
+                # Grab balanced set of residues
+                if undersample:
+                    iis = choose_balanced_inds_undersampling(y)
+                if oversample:
+                    iis = choose_balanced_inds_oversampling(y)
+            else:
+                if weight_loss:
+                    if weight_globally:
+                        iis, weights = use_global_weights(y, positive_weight, negative_weight)
+                    # determine weights at protein level
+                    else:
+                        iis, weights = get_weights(y)
                 else:
+                    iis = get_indices(y)
+
+            # split into approximately equal sized batches
+            # print('protein iis:')
+            # print(len(iis), iis)
+            # print('split iis:')
+            num_batches = int(len(iis) / NUMBER_RESIDUES_PER_BATCH) + 1
+            iis_split = list(split(iis, num_batches))
+            for iis in iis_split:
+                # print(len(iis), iis)
+                with tf.GradientTape() as tape:
+                    prediction = model(X, S, M, train=True, res_level=True)
                     if weight_loss:
-                        if weight_globally:
-                            iis, weights = use_global_weights(y, positive_weight, negative_weight)
-                        # determine weights at protein level
-                        else:
-                            iis, weights = get_weights(y)
-                        y = tf.gather_nd(y, indices=iis)
-                        y = y >= pos_thresh
-                        y = tf.cast(y, tf.float32)
+                        y_sel = tf.gather_nd(y, indices=iis)
+                        y_sel = y_sel >= pos_thresh
+                        y_sel = tf.cast(y_sel, tf.float32)
                         prediction = tf.gather_nd(prediction, indices=iis)
                         # Convert tensors of shape (n,) to (1xn)
                         prediction = tf.expand_dims(prediction, 1)
-                        y = tf.expand_dims(y, 1)
-                        loss_value = loss_fn(y, prediction, sample_weight=weights)
+                        y_sel = tf.expand_dims(y_sel, 1)
+                        loss_value = loss_fn(y_sel, prediction, sample_weight=weights)
                     else:
-                        loss_value = loss_fn(y, prediction)
+                        y_sel = tf.gather_nd(y, indices=iis)
+                        y_sel = y_sel >= pos_thresh
+                        y_sel = tf.cast(y_sel, tf.float32)
+                        prediction = tf.gather_nd(prediction, indices=iis)
+                        loss_value = loss_fn(y_sel, prediction)
+
+                assert(np.isfinite(float(loss_value)))
+                grads = tape.gradient(loss_value, model.trainable_weights)
+                optimizer.apply_gradients(zip(grads, model.trainable_weights))
+            # print('----------------')
         else:
             # test and validation sets (select all examples except for intermediate values)
             # note - can be refactored to remove unnecessary code
@@ -164,10 +185,6 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1, test=False,
             #to be able to identify each y value with its protein and resid
             meta_pairs = [(meta[ind[0]].numpy(), ind[1]) for ind in iis]
             meta_d.extend(meta_pairs)
-        if train:
-            assert(np.isfinite(float(loss_value)))
-            grads = tape.gradient(loss_value, model.trainable_weights)
-            optimizer.apply_gradients(zip(grads, model.trainable_weights))
 
         losses.append(float(loss_value))
         # if batch_num % 5 == 0:
@@ -239,6 +256,19 @@ def convert_test_targs(y):
                for struct_index, y_vals in enumerate(y)
                for res_index in range(len(y_vals))]
         return iis
+
+
+def get_indices(y):
+    if train_on_intermediates:
+        iis = [[struct_index, res_index]
+               for struct_index, y_vals in enumerate(y)
+               for res_index in range(len(y_vals))]
+    else:
+        iis = [[struct_index, res_index]
+               for struct_index, y_vals in enumerate(y)
+               for res_index, res_example in enumerate(y_vals)
+               if res_example >= pos_thresh or res_example < neg_thresh]
+    return iis
 
 def use_global_weights(y, positive_weight, negative_weight):
     if train_on_intermediates:
@@ -333,7 +363,8 @@ def choose_balanced_inds_oversampling(y):
                          else neg_indices[np.random.choice(range(negative_example_count),
                                                            positive_example_count)])
         selection = np.concatenate((pos_selection, neg_selection))
-
+        # shuffle to ensure that positive and negative examples are well-mixed
+        np.random.shuffle(selection)
         # assert that number of selected residues is 2 x the number of examples
         # in the majority class
         assert selection.shape[0] == max(negative_example_count, positive_example_count) * 2
@@ -373,6 +404,8 @@ def choose_balanced_inds_undersampling(y):
                          else neg_indices[np.random.choice(range(negative_example_count),
                                                            positive_example_count, replace=False)])
         selection = np.concatenate((pos_selection, neg_selection))
+        # shuffle to ensure that positive and negative examples are well-mixed
+        np.random.shuffle(selection)
 
         # assert that number of selected residues is 2 x the number of examples
         # in the minority class
@@ -438,8 +471,9 @@ def predict_on_xtals(model, xtal_set_path):
 # ------TRAINING PARAMETERS----- #
 NUM_EPOCHS = 20
 BATCH_SIZE = 1
+NUMBER_RESIDUES_PER_BATCH = 16
 # LEARNING_RATE = 0.00005
-LEARNING_RATE = 0.0002
+LEARNING_RATE = 0.00001
 # should generally be set to False
 discard_intermediates_in_testing = False
 # balance positive and negative examples in each batch
@@ -496,13 +530,14 @@ fold = int(sys.argv[2])
 ####### CREATE OUTPUT FILENAMES #####
 base_path = "/project/bowmanlab/ameller/gvp/5-fold-cv-window-40-nearby-pv-procedure"
 
+subdir_name = f'train-with-{NUMBER_RESIDUES_PER_BATCH}-residue-batches-'
 if balance_classes:
     if oversample:
-        subdir_name = 'oversample'
+        subdir_name += 'oversample'
     elif undersample:
-        subdir_name = 'undersample'
+        subdir_name += 'undersample'
 else:
-    subdir_name = "no-balancing"
+    subdir_name += "no-balancing"
     if weight_loss:
         subdir_name += "-weight-loss"
         if weight_globally:
@@ -521,7 +556,7 @@ if discard_intermediates_in_testing:
 nn_name = (f"net_8-50_1-32_16-100_"
            f"dr_{DROPOUT_RATE}_"
            f"nl_{NUM_LAYERS}_hd_{HIDDEN_DIM}_"
-           f"lr_{LEARNING_RATE}_b{BATCH_SIZE}_{NUM_EPOCHS}epoch_"
+           f"lr_{LEARNING_RATE}_b{NUMBER_RESIDUES_PER_BATCH}resis_{NUM_EPOCHS}epoch_"
            f"feat_method_{featurization_method}_rank_{min_rank}_"
            f"stride_{stride}_window_{window}_pos_{pos_thresh}")
 
