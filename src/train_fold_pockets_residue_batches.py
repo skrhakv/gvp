@@ -9,6 +9,8 @@ from models import *
 import os
 from util import save_checkpoint, load_checkpoint
 import random
+import math
+from glob import glob
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 
@@ -16,6 +18,42 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 def split(a, n):
     k, m = divmod(len(a), n)
     return (a[i*k+min(i, m):(i+1)*k+min(i+1, m)] for i in range(n))
+
+# utility method for continuing trainings
+def get_training_data_for_restart(model, opt, nn_dir):
+    # Determine network name
+    index_filenames = glob(f"{nn_dir}/*.index")
+    # check if there is only one network in the folder
+    if len(np.unique([os.path.basename(fn).split('_')[0] for fn in index_filenames])) == 1:
+        nn_path = index_filenames[-1].split('.index')[0]
+        load_checkpoint(model, opt, nn_path)
+    else:
+        print('multiple networks in folder')
+        nn_path = index_filenames[-1].split('.index')[0]
+        load_checkpoint(model, opt, nn_path)
+        print(f'selecting following network id: {os.path.basename(nn_path)}')
+
+    model_id = os.path.basename(index_filenames[-1]).split('_')[0]
+    last_epoch = int(os.path.basename(index_filenames[-1]).split('_')[1].split('.')[0])
+
+    # need to also determine best epoch, best val, and best auc
+    best_epoch, best_val, best_pr_auc = 0, np.inf, 0
+    val_losses = []
+    train_losses = []
+    for epoch in range(last_epoch):
+        train_loss = np.load(os.path.join(nn_dir, f"train_loss_{epoch}.npy"))
+        train_losses.append(train_loss)
+        val_loss = np.load(os.path.join(nn_dir, f"val_loss_{epoch}.npy"))
+        val_losses.append(val_loss)
+        pr_auc = np.load(os.path.join(nn_dir, f"val_pr_auc_{epoch}.npy"))
+        if val_loss < best_val:
+            best_val = val_loss
+        if pr_auc > best_pr_auc:
+            best_pr_auc = pr_auc
+            best_epoch = epoch
+
+    return model_id, last_epoch, best_epoch, best_val, best_pr_auc, val_losses, train_losses
+
 
 def make_model():
     #Emailed the lead author for what these values should be, these are good defaults.
@@ -37,14 +75,20 @@ def main():
     optimizer = tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE)
     model = make_model()
 
-    model_id = int(datetime.timestamp(datetime.now()))
-
     loop_func = loop
-    best_epoch, best_val, best_auc = 0, np.inf, 0
-    val_losses = []
-    train_losses = []
 
-    for epoch in range(NUM_EPOCHS):
+    if continue_previous_training:
+        training_params = get_training_data_for_restart(model, optimizer, outdir)
+        model_id, last_epoch, best_epoch, best_val, best_pr_auc, val_losses, train_losses = training_params
+        start_epoch = last_epoch
+    else:
+        model_id = int(datetime.timestamp(datetime.now()))
+        best_epoch, best_val, best_pr_auc = 0, np.inf, 0
+        val_losses = []
+        train_losses = []
+        start_epoch = 0
+
+    for epoch in range(start_epoch, NUM_EPOCHS):
         if weight_globally:
             loss, y_pred, y_true = loop_func(trainset, model, train=True, optimizer=optimizer,
                                              positive_weight=positive_weight,
@@ -77,9 +121,9 @@ def main():
         if loss < best_val:
             best_val = loss
 
-        # Update best auc to keep track of best model
-        if auc > best_auc:
-            best_epoch, best_auc = epoch, auc
+        # Update best PR AUC to keep track of best model
+        if pr_auc > best_pr_auc:
+            best_epoch, best_pr_auc = epoch, pr_auc
 
     # Test with best validation loss
     print(f'Best AUC is in epoch {best_epoch}')
@@ -132,6 +176,8 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1, test=False,
                     iis = choose_balanced_inds_undersampling(y)
                 if oversample:
                     iis = choose_balanced_inds_oversampling(y)
+                if constant_size_balanced_sets:
+                    iis = choose_balanced_inds_constant_size(y, NUMBER_RESIDUES_PER_DRAW)
             else:
                 if weight_loss:
                     if weight_globally:
@@ -146,9 +192,11 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1, test=False,
             # print('protein iis:')
             # print(len(iis), iis)
             # print('split iis:')
-            num_batches = int(len(iis) / NUMBER_RESIDUES_PER_BATCH) + 1
+            num_batches = int(math.ceil(len(iis) / NUMBER_RESIDUES_PER_BATCH))
             iis_split = list(split(iis, num_batches))
-            for iis in iis_split:
+            if weight_loss:
+                weights_split = list(split(weights, num_batches))
+            for i, iis in enumerate(iis_split):
                 # print(len(iis), iis)
                 with tf.GradientTape() as tape:
                     prediction = model(X, S, M, train=True, res_level=True)
@@ -160,7 +208,8 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1, test=False,
                         # Convert tensors of shape (n,) to (1xn)
                         prediction = tf.expand_dims(prediction, 1)
                         y_sel = tf.expand_dims(y_sel, 1)
-                        loss_value = loss_fn(y_sel, prediction, sample_weight=weights)
+                        loss_value = loss_fn(y_sel, prediction,
+                                             sample_weight=weights_split[i])
                     else:
                         y_sel = tf.gather_nd(y, indices=iis)
                         y_sel = y_sel >= pos_thresh
@@ -335,6 +384,86 @@ def get_weights(y):
             assert np.all([w == 1.0 for w in weights])
     return iis, weights
 
+def choose_balanced_inds_constant_size(y, n_residues):
+    '''
+    We will undersample or oversample as needed to generate
+    a set of indices with equal number of positive and
+    negative examples. The iis will be shuffled to ensure
+    that batches constructed from subsets of these indices
+    are mixed. If there are only negative or positive examples,
+    up to n_residues will be returned since balancing is not possible.
+
+    n_residues : int
+        specifies the amount of residues that should be returned
+    '''
+    pos_mask = np.array(y) >= pos_thresh
+    if train_on_intermediates:
+        neg_mask = np.array(y) < pos_thresh
+    else:
+        neg_mask = np.array(y) < neg_thresh
+
+    positive_example_count = pos_mask.sum()
+    negative_example_count = neg_mask.sum()
+
+    # require both positive and negative example to return balanced inds
+    if (positive_example_count > 0 and negative_example_count > 0):
+        struct_indices, residue_indices = np.where(pos_mask)
+        # creates a N x 2 list where N is the number of examples
+        pos_indices = np.array([[si, ri] for si, ri in
+                                zip(struct_indices, residue_indices)])
+        struct_indices, residue_indices = np.where(neg_mask)
+        neg_indices = np.array([[si, ri] for si, ri in
+                                zip(struct_indices, residue_indices)])
+
+        # we will target n_residues / 2 positive and negative examples
+        target_size = int(n_residues / 2)
+
+        # if we have more positive examples than the target
+        # then we will undersample
+        if positive_example_count > target_size:
+            pos_selection = pos_indices[np.random.choice(range(positive_example_count),
+                                                         target_size, replace=False)]
+        # if we have fewer positive examples than the target
+        # then we will oversample
+        elif positive_example_count < target_size:
+            pos_selection = pos_indices[np.random.choice(range(positive_example_count),
+                                                         target_size)]
+        else:
+            pos_selection = pos_indices
+
+        # if we have more negative examples than the target
+        # then we will undersample
+        if negative_example_count > target_size:
+            neg_selection = neg_indices[np.random.choice(range(negative_example_count),
+                                                         target_size, replace=False)]
+        # if we have fewer negative examles than the target
+        # then we will oversample
+        elif negative_example_count < target_size:
+            neg_selection = neg_indices[np.random.choice(range(negative_example_count),
+                                                         target_size)]
+        else:
+            neg_selection = neg_indices
+
+        selection = np.concatenate((pos_selection, neg_selection))
+        # shuffle to ensure that positive and negative examples are well-mixed
+        np.random.shuffle(selection)
+        # assert that number of selected residues is 2 x the number of examples
+        # in the majority class
+        assert selection.shape[0] == n_residues
+        return selection.tolist()
+    # if there are only positive or only negative examples
+    # return n_residue random indices
+    else:
+        iis = np.array([[struct_index, res_index]
+                        for struct_index, y_vals in enumerate(y)
+                        for res_index in range(len(y_vals))])
+        # if there are more residues in this example than n_residues
+        # we will take a random sample of size n_residues (undersampling)
+        if len(iis) > n_residues:
+            iis = iis[np.random.choice(range(len(iis)), n_residues, replace=False)]
+        return iis.tolist()
+
+
 def choose_balanced_inds_oversampling(y):
     pos_mask = np.array(y) >= pos_thresh
     if train_on_intermediates:
@@ -469,34 +598,46 @@ def predict_on_xtals(model, xtal_set_path):
 ## Define global variables
 
 # ------TRAINING PARAMETERS----- #
-NUM_EPOCHS = 20
-BATCH_SIZE = 1
-NUMBER_RESIDUES_PER_BATCH = 16
+NUM_EPOCHS = 30
+# BATCH_SIZE specifies the number of proteins that are
+# featurized and drawn each iteration of the training loop
+BATCH_SIZE = 4
+# NUMBER_RESIDUES_PER_DRAW specifies the number of residues
+# that are selected from the above number of proteins
+NUMBER_RESIDUES_PER_DRAW = 32 * 5
+# NUMBER_RESIDUES_PER_BATCH specifies the number of residues
+# that are used for an error calculation
+NUMBER_RESIDUES_PER_BATCH = 4
+
 # LEARNING_RATE = 0.00005
-LEARNING_RATE = 0.00001
+LEARNING_RATE = 0.00002
+# boolean controlling restarts
+continue_previous_training = False
+previous_epoch_count = 20
+
 # should generally be set to False
 discard_intermediates_in_testing = False
 # balance positive and negative examples in each batch
-balance_classes = True
+balance_classes = False
 # with or without weighting
-weight_loss = False
+weight_loss = True
 # weight per protein or globally
 # if global, weights are determined based on the number
 # of positive and negative examples in the entire dataset
-weight_globally = False
-# include intermediate examples in training set
-train_on_intermediates = True
+weight_globally = True
+
 # if not training with all data, do we oversample
 # minority class or undersample majority class
 # to maintain class balance
 oversample = False
-undersample = True
+undersample = False
+constant_size_balanced_sets = False
 # you must set balance classes to True if you
 # wish to run with oversampling or undersampling
-assert ~(balance_classes ^ (oversample or undersample))
+assert ~(balance_classes ^ (oversample or undersample or constant_size_balanced_sets))
 # you cannot run with both
 if balance_classes:
-    assert oversample ^ undersample
+    assert (oversample ^ undersample) ^ constant_size_balanced_sets
 
 # ----------------------------- #
 
@@ -505,7 +646,7 @@ featurization_method = 'nearby-pv-procedure'
 min_rank = 7
 stride = 1
 pos_thresh = 116
-neg_thresh = 20
+neg_thresh = 60
 # ----END LIGSITE INPUT PARAMETERS ---- #
 
 # ------- GVP INPUT PARAMETERS ---- #
@@ -524,11 +665,14 @@ xtal_validation_path = ('/project/bowmanlab/borowsky.jonathan/FAST-cs/'
 # from python call
 window = int(sys.argv[1])
 fold = int(sys.argv[2])
+# include intermediate examples in training set
+# this is set in the python command line arguments
+train_on_intermediates = bool(int(sys.argv[3]))
 ######### END INPUTS ##############
 
 
 ####### CREATE OUTPUT FILENAMES #####
-base_path = "/project/bowmanlab/ameller/gvp/5-fold-cv-window-40-nearby-pv-procedure"
+base_path = "/project/bowmanlab/ameller/gvp/task1-final-folds-window-40-nearby-pv-procedure"
 
 subdir_name = f'train-with-{NUMBER_RESIDUES_PER_BATCH}-residue-batches-'
 if balance_classes:
@@ -536,6 +680,8 @@ if balance_classes:
         subdir_name += 'oversample'
     elif undersample:
         subdir_name += 'undersample'
+    elif constant_size_balanced_sets:
+        subdir_name += f'constant-size-balanced-{NUMBER_RESIDUES_PER_DRAW}-resi-draws'
 else:
     subdir_name += "no-balancing"
     if weight_loss:
@@ -567,11 +713,21 @@ outdir = f'{base_path}/{subdir_name}/{nn_name}_{fold}/'
 
 ####### END CREATE OUTPUT FILENAMES #####
 
+if continue_previous_training:
+    old_nn_name = (f"net_8-50_1-32_16-100_"
+                   f"dr_{DROPOUT_RATE}_"
+                   f"nl_{NUM_LAYERS}_hd_{HIDDEN_DIM}_"
+                   f"lr_{LEARNING_RATE}_b{NUMBER_RESIDUES_PER_BATCH}resis_{previous_epoch_count}epoch_"
+                   f"feat_method_{featurization_method}_rank_{min_rank}_"
+                   f"stride_{stride}_window_{window}_pos_{pos_thresh}")
+    old_outdir = f'{base_path}/{subdir_name}/{old_nn_name}_{fold}/'
+    os.system(f'mv {old_outdir} {outdir}')
+
 print(outdir)
 
 os.makedirs(outdir, exist_ok=True)
 model_path = outdir + '{}_{}'
-FILESTEM = f'{featurization_method}-min-rank-{min_rank}-window-{window}-stride-{stride}-cv-fold-{fold}'
+FILESTEM = f'{featurization_method}-min-rank-{min_rank}-window-{window}-stride-{stride}-final-task1-fold-{fold}'
 
 #### GPU INFO ####
 #tf.debugging.enable_check_numerics()

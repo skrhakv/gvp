@@ -1,4 +1,3 @@
-import sys
 import tensorflow as tf
 from datetime import datetime
 from datasets import *
@@ -35,7 +34,7 @@ def main():
     model_id = int(datetime.timestamp(datetime.now()))
 
     loop_func = loop
-    best_epoch, best_val, best_auc = 0, np.inf, 0
+    best_epoch, best_val, best_pr_auc = 0, np.inf, 0
     val_losses = []
     train_losses = []
 
@@ -73,8 +72,8 @@ def main():
             best_val = loss
 
         # Update best auc to keep track of best model
-        if auc > best_auc:
-            best_epoch, best_auc = epoch, auc
+        if pr_auc > best_pr_auc:
+            best_epoch, best_pr_auc = epoch, pr_auc
 
     # Test with best validation loss
     print(f'Best AUC is in epoch {best_epoch}')
@@ -150,7 +149,17 @@ def loop(dataset, model, train=False, optimizer=None, alpha=1, test=False,
                         y = tf.expand_dims(y, 1)
                         loss_value = loss_fn(y, prediction, sample_weight=weights)
                     else:
-                        loss_value = loss_fn(y, prediction)
+                        if train_on_intermediates:
+                            y = y >= pos_thresh
+                            y = tf.cast(y, tf.float32)
+                            loss_value = loss_fn(y, prediction)
+                        else:
+                            iis = get_indices(y)
+                            y = tf.gather_nd(y, indices=iis)
+                            y = y >= pos_thresh
+                            y = tf.cast(y, tf.float32)
+                            prediction = tf.gather_nd(prediction, indices=iis)
+                            loss_value = loss_fn(y, prediction)
         else:
             # test and validation sets (select all examples except for intermediate values)
             # note - can be refactored to remove unnecessary code
@@ -239,6 +248,18 @@ def convert_test_targs(y):
                for struct_index, y_vals in enumerate(y)
                for res_index in range(len(y_vals))]
         return iis
+
+def get_indices(y):
+    if train_on_intermediates:
+        iis = [[struct_index, res_index]
+               for struct_index, y_vals in enumerate(y)
+               for res_index in range(len(y_vals))]
+    else:
+        iis = [[struct_index, res_index]
+               for struct_index, y_vals in enumerate(y)
+               for res_index, res_example in enumerate(y_vals)
+               if res_example >= pos_thresh or res_example < neg_thresh]
+    return iis
 
 def use_global_weights(y, positive_weight, negative_weight):
     if train_on_intermediates:
@@ -436,27 +457,25 @@ def predict_on_xtals(model, xtal_set_path):
 ## Define global variables
 
 # ------TRAINING PARAMETERS----- #
-NUM_EPOCHS = 20
+NUM_EPOCHS = 30
 BATCH_SIZE = 1
 # LEARNING_RATE = 0.00005
-LEARNING_RATE = 0.0002
+LEARNING_RATE = 0.00002
 # should generally be set to False
 discard_intermediates_in_testing = False
 # balance positive and negative examples in each batch
-balance_classes = True
+balance_classes = False
 # with or without weighting
-weight_loss = False
+weight_loss = True
 # weight per protein or globally
 # if global, weights are determined based on the number
 # of positive and negative examples in the entire dataset
-weight_globally = False
-# include intermediate examples in training set
-train_on_intermediates = True
+weight_globally = True
 # if not training with all data, do we oversample
 # minority class or undersample majority class
 # to maintain class balance
 oversample = False
-undersample = True
+undersample = False
 # you must set balance classes to True if you
 # wish to run with oversampling or undersampling
 assert ~(balance_classes ^ (oversample or undersample))
@@ -471,7 +490,7 @@ featurization_method = 'nearby-pv-procedure'
 min_rank = 7
 stride = 1
 pos_thresh = 116
-neg_thresh = 20
+neg_thresh = 60
 # ----END LIGSITE INPUT PARAMETERS ---- #
 
 # ------- GVP INPUT PARAMETERS ---- #
@@ -490,11 +509,14 @@ xtal_validation_path = ('/project/bowmanlab/borowsky.jonathan/FAST-cs/'
 # from python call
 window = int(sys.argv[1])
 fold = int(sys.argv[2])
+# include intermediate examples in training set
+# this is set in the python command line arguments
+train_on_intermediates = bool(int(sys.argv[3]))
 ######### END INPUTS ##############
 
 
 ####### CREATE OUTPUT FILENAMES #####
-base_path = "/project/bowmanlab/ameller/gvp/5-fold-cv-window-40-nearby-pv-procedure"
+base_path = "/project/bowmanlab/ameller/gvp/task1-final-folds-window-40-nearby-pv-procedure"
 
 if balance_classes:
     if oversample:
@@ -536,7 +558,7 @@ print(outdir)
 
 os.makedirs(outdir, exist_ok=True)
 model_path = outdir + '{}_{}'
-FILESTEM = f'{featurization_method}-min-rank-{min_rank}-window-{window}-stride-{stride}-cv-fold-{fold}'
+FILESTEM = f'{featurization_method}-min-rank-{min_rank}-window-{window}-stride-{stride}-final-task1-fold-{fold}'
 
 #### GPU INFO ####
 #tf.debugging.enable_check_numerics()
