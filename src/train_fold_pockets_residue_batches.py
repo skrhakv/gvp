@@ -1,4 +1,5 @@
 import sys
+import yaml
 import tensorflow as tf
 from datetime import datetime
 from datasets import *
@@ -596,42 +597,52 @@ def predict_on_xtals(model, xtal_set_path):
 
 ######### INPUTS ##########
 ## Define global variables
+# from python call
+yaml_filename = sys.argv[1]
+
+with open(yaml_filename, "r") as stream:
+    try:
+        training_config = yaml.safe_load(stream)
+    except yaml.YAMLError as exc:
+        print(exc)
 
 # ------TRAINING PARAMETERS----- #
-NUM_EPOCHS = 30
+NUM_EPOCHS = training_config['NUM_EPOCHS']
 # BATCH_SIZE specifies the number of proteins that are
 # featurized and drawn each iteration of the training loop
-BATCH_SIZE = 4
-# NUMBER_RESIDUES_PER_DRAW specifies the number of residues
-# that are selected from the above number of proteins
-NUMBER_RESIDUES_PER_DRAW = 32 * 5
+BATCH_SIZE = training_config['BATCH_SIZE']
 # NUMBER_RESIDUES_PER_BATCH specifies the number of residues
 # that are used for an error calculation
-NUMBER_RESIDUES_PER_BATCH = 4
+NUMBER_RESIDUES_PER_BATCH = training_config['NUMBER_RESIDUES_PER_BATCH']
 
-# LEARNING_RATE = 0.00005
-LEARNING_RATE = 0.00002
-# boolean controlling restarts
-continue_previous_training = False
-previous_epoch_count = 20
+LEARNING_RATE = training_config['LEARNING_RATE']
+
+continue_previous_training = training_config['continue_previous_training']
+if continue_previous_training:
+    previous_epoch_count = training_config['previous_epoch_count']
 
 # should generally be set to False
-discard_intermediates_in_testing = False
+discard_intermediates_in_testing = training_config['discard_intermediates_in_testing']
 # balance positive and negative examples in each batch
-balance_classes = False
+balance_classes = training_config['balance_classes']
 # with or without weighting
-weight_loss = True
+weight_loss = training_config['weight_loss']
 # weight per protein or globally
 # if global, weights are determined based on the number
 # of positive and negative examples in the entire dataset
-weight_globally = True
+weight_globally = training_config['weight_globally']
 
 # if not training with all data, do we oversample
 # minority class or undersample majority class
 # to maintain class balance
-oversample = False
-undersample = False
-constant_size_balanced_sets = False
+oversample = training_config['oversample']
+undersample = training_config['undersample']
+constant_size_balanced_sets = training_config['constant_size_balanced_sets']
+if constant_size_balanced_sets:
+    # NUMBER_RESIDUES_PER_DRAW specifies the number of residues
+    # that are selected from the above number of proteins
+    NUMBER_RESIDUES_PER_DRAW = training_config['NUMBER_RESIDUES_PER_DRAW']
+
 # you must set balance classes to True if you
 # wish to run with oversampling or undersampling
 assert ~(balance_classes ^ (oversample or undersample or constant_size_balanced_sets))
@@ -639,40 +650,35 @@ assert ~(balance_classes ^ (oversample or undersample or constant_size_balanced_
 if balance_classes:
     assert (oversample ^ undersample) ^ constant_size_balanced_sets
 
+train_on_intermediates = training_config['train_on_intermediates']
+fold = training_config['fold']
 # ----------------------------- #
 
 # ------- LIGSITE INPUT PARAMETERS ---- #
-featurization_method = 'nearby-pv-procedure'
-min_rank = 7
-stride = 1
-pos_thresh = 116
-neg_thresh = 60
+featurization_method = training_config['featurization_method']
+min_rank = training_config['min_rank']
+stride = training_config['stride']
+pos_thresh = training_config['pos_thresh']
+neg_thresh = training_config['neg_thresh']
+window = training_config['window']
 # ----END LIGSITE INPUT PARAMETERS ---- #
 
 # ------- GVP INPUT PARAMETERS ---- #
-DROPOUT_RATE = 0.1
-HIDDEN_DIM = 100
-NUM_LAYERS = 4
+DROPOUT_RATE = training_config['DROPOUT_RATE']
+HIDDEN_DIM = training_config['HIDDEN_DIM']
+NUM_LAYERS = training_config['NUM_LAYERS']
 # -----END GVP INPUT PARAMETERS ---- #
 
 # ---- XTAL VALIDATION SET -----#
 # file contains pdb path as well as labels
-xtal_validation_path = ('/project/bowmanlab/borowsky.jonathan/FAST-cs/'
-                        'protein-sets/new_pockets/labels/'
-                        'new_pocket_labels_validation_all1.npy')
+xtal_validation_path = training_config['xtal_validation_path']
 # ---- END XTAL VALIDATION SET -----#
-
-# from python call
-window = int(sys.argv[1])
-fold = int(sys.argv[2])
-# include intermediate examples in training set
-# this is set in the python command line arguments
-train_on_intermediates = bool(int(sys.argv[3]))
+base_path = training_config['base_path']
 ######### END INPUTS ##############
 
 
 ####### CREATE OUTPUT FILENAMES #####
-base_path = "/project/bowmanlab/ameller/gvp/task1-final-folds-window-40-nearby-pv-procedure"
+# base_path = "/project/bowmanlab/ameller/gvp/task1-final-folds-window-40-nearby-pv-procedure"
 
 subdir_name = f'train-with-{NUMBER_RESIDUES_PER_BATCH}-residue-batches-'
 if balance_classes:
@@ -702,7 +708,8 @@ if discard_intermediates_in_testing:
 nn_name = (f"net_8-50_1-32_16-100_"
            f"dr_{DROPOUT_RATE}_"
            f"nl_{NUM_LAYERS}_hd_{HIDDEN_DIM}_"
-           f"lr_{LEARNING_RATE}_b{NUMBER_RESIDUES_PER_BATCH}resis_{NUM_EPOCHS}epoch_"
+           f"lr_{LEARNING_RATE}_b{NUMBER_RESIDUES_PER_BATCH}resis_"
+           f"b{BATCH_SIZE}proteins_{NUM_EPOCHS}epoch_"
            f"feat_method_{featurization_method}_rank_{min_rank}_"
            f"stride_{stride}_window_{window}_pos_{pos_thresh}")
 
@@ -778,3 +785,7 @@ np.save(os.path.join(outdir,"test_y_pred.npy"), y_pred)
 np.save(os.path.join(outdir,"test_y_true.npy"), y_true)
 np.save(os.path.join(outdir,"test_meta_d.npy"), meta_d)
 ##################################
+
+####### MOVE TRAINING YAML FILE ###
+os.system(f"mv {yaml_filename} {os.path.join(outdir, 'training.yml')}")
+###################################

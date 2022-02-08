@@ -14,7 +14,7 @@ hostname
 echo "HIP ROCM REQUESTS $HIP_VISIBLE_DEVICES"
 
 #The Singularity run
-singularity exec --no-home -H /project/bowmanlab/ameller/tf-singularity-home/ -B /project:/project /project/bowmanlab/rocm/tensorflow-rocm.sif /bin/bash /project/bowmore/ameller/gvp/src/run-fold.sh
+singularity exec --no-home -H /project/bowmanlab/ameller/tf-singularity-home/ -B /project:/project /project/bowmanlab/rocm/tensorflow-rocm.sif python train_fold_pockets_residue_batches.py training-yaml-files/to-run/train_4prot_4resi_no_balance_intermediates_True_fold_4.yaml
 
 #Things to do after singularity
 echo Done
