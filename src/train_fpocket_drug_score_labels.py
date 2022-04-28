@@ -254,6 +254,8 @@ def train_residue_batches(dataset, model, optimizer=None,
             with tf.GradientTape() as tape:
                 prediction = model(X, S, M, train=True, res_level=True)
                 y_sel = tf.gather_nd(y, indices=iis)
+                # assert that no negative training labels have been selected
+                assert np.all(y_sel >= 0)
                 prediction = tf.gather_nd(prediction, indices=iis)
                 loss_value = loss_fn(y_sel, prediction)
 
@@ -294,7 +296,7 @@ def train_protein_batches(dataset, model, optimizer=None, positive_weight=1, neg
 def get_indices(y):  
     iis = [[struct_index, res_index]
            for struct_index, y_vals in enumerate(y)
-           for res_index in range(len(y_vals))]
+           for res_index in np.where(y_vals >= 0)[0]]
     return iis
 
 
@@ -537,6 +539,7 @@ print(outdir)
 os.makedirs(outdir, exist_ok=True)
 model_path = outdir + '{}_{}'
 FILESTEM = f'fpocket-drug-scores-{feat_type}-cutoff-{cutoff}-window-{window}ns-stride-{stride}'
+print(FILESTEM)
 
 #### GPU INFO ####
 #tf.debugging.enable_check_numerics()

@@ -71,7 +71,7 @@ def pockets_dataset(batch_size, filestem):
 
     return trainset, valset, testset
 
-def simulation_dataset(batch_size, filestem, use_tensors=True, y_type='int32'):
+def simulation_dataset(batch_size, filestem, use_tensors=True, y_type='int32', use_lm=False):
     '''
     for training models to locate cryptic pockets in xtals
     returns only training datasets from simulation data
@@ -80,11 +80,17 @@ def simulation_dataset(batch_size, filestem, use_tensors=True, y_type='int32'):
     y_train = np.load(os.path.join(DATA_DIR, f"task2/y-train-{filestem}.npy"), allow_pickle=True)
     trainset = list(zip(X_train, y_train))
 
-    trainset = DynamicLoader(trainset, batch_size, use_tensors=use_tensors, y_type=y_type)
+    trainset = DynamicLoader(trainset, batch_size, use_tensors=use_tensors, y_type=y_type, use_lm=use_lm)
 
-    if y_type == 'int32':
+    output_types = (tf.float32)
+
+    if y_type == 'int32' and use_lm:
+        output_types = (tf.float32, tf.float32, tf.int32, tf.string, tf.float32)
+    elif y_type == 'int32' and not use_lm:
         output_types = (tf.float32, tf.int32, tf.int32, tf.string, tf.float32)
-    elif y_type == 'float32':
+    elif y_type == 'float32' and use_lm:
+        output_types = (tf.float32, tf.float32, tf.float32, tf.string, tf.float32)
+    else:
         output_types = (tf.float32, tf.int32, tf.float32, tf.string, tf.float32)
 
     trainset = tf.data.Dataset.from_generator(trainset.__iter__, output_types=output_types).prefetch(3)
@@ -92,7 +98,7 @@ def simulation_dataset(batch_size, filestem, use_tensors=True, y_type='int32'):
     return trainset
 
 
-def parse_batch(batch, use_tensors=True, y_type='int32'):
+def parse_batch(batch, use_tensors=True, y_type='int32', use_lm=False):
     # t0 = time.time()
     #Batch will have [(xtc,pdb,index,residue,1/0),...]
     pdbs = []
@@ -111,7 +117,12 @@ def parse_batch(batch, use_tensors=True, y_type='int32'):
         X = np.zeros([B, L_max, 5, 3], dtype=np.float32)
     else:
         X = np.zeros([B, L_max, 4, 3], dtype=np.float32)
-    S = np.zeros([B, L_max], dtype=np.int32)
+
+    if use_lm:
+        S = np.zeros([B, L_max, 1280], dtype=np.float32)
+    else:
+        S = np.zeros([B, L_max], dtype=np.int32)
+
     # -1 so we can distinguish 0 pocket volume and padded indices later
     if y_type == 'int32':
         y = np.zeros([B, L_max], dtype=np.int32) - 1
@@ -137,8 +148,14 @@ def parse_batch(batch, use_tensors=True, y_type='int32'):
             prot_bb = struc.atom_slice(prot_iis)
             xyz = prot_bb.xyz.reshape(l, 4, 3)
 
-        seq = [r.name for r in pdb.top.residues]
-        S[i, :l] = np.asarray([lookup[abbrev[a]] for a in seq], dtype=np.int32)
+        if use_lm:
+            fn = 'S_embedding_' + os.path.basename(pdb_fn).split('.')[0] + '.npy'
+            S_path = f'/project/bowmanlab/mdward/projects/FAST-pocket-pred/precompute_S/{fn}'
+            S[i, :l] = np.load(S_path)
+        else:
+            seq = [r.name for r in pdb.top.residues]
+            S[i, :l] = np.asarray([lookup[abbrev[a]] for a in seq], dtype=np.int32)
+
         X[i] = np.pad(xyz, [[0, L_max - l], [0, 0], [0, 0]],
                       'constant', constant_values=(np.nan, ))
         y[i, :l] = targs
@@ -154,12 +171,14 @@ def parse_batch(batch, use_tensors=True, y_type='int32'):
     return X, S, y, meta, mask
 
 class DynamicLoader(): 
-    def __init__(self, dataset, batch_size=32, shuffle=True, use_tensors=True, y_type='int32'):
+    def __init__(self, dataset, batch_size=32, shuffle=True,
+                 use_tensors=True, y_type='int32', use_lm=False):
         self.dataset = dataset
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.use_tensors = use_tensors
         self.y_type = y_type
+        self.use_lm = use_lm
 
     def chunks(self,arr, chunk_size):
         """Yield successive chunk_size chunks from arr."""
@@ -176,4 +195,5 @@ class DynamicLoader():
         if self.shuffle: np.random.shuffle(self.clusters)
         N = len(self.clusters)
         for batch in self.clusters[:N]:
-            yield parse_batch(batch, use_tensors=self.use_tensors, y_type=self.y_type)
+            yield parse_batch(batch, use_tensors=self.use_tensors,
+                              y_type=self.y_type, use_lm=self.use_lm)

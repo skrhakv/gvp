@@ -44,7 +44,7 @@ def process_strucs(strucs):
 
     return X, S, mask
 
-def process_paths(apo_IDs, use_tensors=True):
+def process_paths(apo_IDs, use_tensors=True, use_lm=False):
     """Takes a list of apo IDs to pdb files
     """
     pdb_dir = '/project/bowmore/ameller/projects/pocket_prediction/val_structures/'
@@ -68,7 +68,11 @@ def process_paths(apo_IDs, use_tensors=True):
         X = np.zeros([B, L_max, 5, 3], dtype=np.float32)
     else:
         X = np.zeros([B, L_max, 4, 3], dtype=np.float32)
-    S = np.zeros([B, L_max], dtype=np.int32)
+
+    if use_lm:
+        S = np.zeros([B, L_max, 1280], dtype=np.float32)
+    else:
+        S = np.zeros([B, L_max], dtype=np.int32)
 
     for i, prot_bb in enumerate(pdbs):
         l = prot_bb.top.n_residues
@@ -86,8 +90,19 @@ def process_paths(apo_IDs, use_tensors=True):
         else:
             xyz = prot_bb.xyz.reshape(l, 4, 3)
 
-        seq = [r.name for r in prot_bb.top.residues]
-        S[i, :l] = np.asarray([lookup[abbrev[a]] for a in seq], dtype=np.int32)
+        if use_lm:
+            fn = f'S_embedding_{apo_IDs[i]}.npy'
+            S_path = f'/project/bowmanlab/mdward/projects/FAST-pocket-pred/precompute_S/{fn}'
+            if os.path.exists(S_path):
+                S[i, :l] = np.load(S_path)
+            else:
+                fn = f'S_embedding_{apo_IDs[i].upper()}.npy'
+                S_path = f'/project/bowmanlab/mdward/projects/FAST-pocket-pred/precompute_S/{fn}'
+                S[i, :l] = np.load(S_path)
+        else:
+            seq = [r.name for r in prot_bb.top.residues]
+            S[i, :l] = np.asarray([lookup[abbrev[a]] for a in seq], dtype=np.int32)
+
         X[i] = np.pad(xyz, [[0,L_max-l], [0,0], [0,0]],
                       'constant', constant_values=(np.nan, ))
 
@@ -95,6 +110,9 @@ def process_paths(apo_IDs, use_tensors=True):
     mask = np.isfinite(np.sum(X,(2,3))).astype(np.float32)
     X[isnan] = 0.
     X = np.nan_to_num(X)
+
+    if use_lm:
+        S = tf.convert_to_tensor(S)
 
     return X, S, mask
 

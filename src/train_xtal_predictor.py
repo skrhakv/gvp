@@ -42,10 +42,35 @@ def get_training_data_for_restart(model, opt, nn_dir):
     best_epoch, best_val, best_pr_auc = 0, np.inf, 0
     val_losses = []
     train_losses = []
-    for epoch in range(last_epoch):
+    for epoch in range(last_epoch + 1):
         train_loss = np.load(os.path.join(nn_dir, f"train_loss_{epoch}.npy"))
         train_losses.append(train_loss)
-        val_loss = np.load(os.path.join(nn_dir, f"val_loss_{epoch}.npy"))
+
+        # if validation code failed re-run here
+        val_loss_file = os.path.join(nn_dir, f"val_loss_{epoch}.npy")
+        if os.path.exists(val_loss_file):
+            val_loss = np.load(val_loss_file)
+        else:
+            print(f'recomputing validation statistics for {nn_dir} and epoch {epoch}')
+            # Determine validation loss and performance statistics
+            predictions, mask = predict_on_xtals(model, xtal_val_ids, test=False,
+                use_tensors=use_tensors, use_lm=use_lm)
+
+            # predictions has shape N proteins x max length among N proteins
+            np.save(os.path.join(nn_dir, f"val_predictions_{epoch}.npy"), predictions)
+
+            val_loss, auc, pr_auc, y_pred, y_true, protein_aucs, protein_pr_aucs = assess_performance(predictions,
+                mask, xtal_val_ids)
+
+            # Save out validation metrics for this epoch
+            np.save(os.path.join(nn_dir, f"val_loss_{epoch}.npy"), val_loss)
+            np.save(os.path.join(nn_dir, f"val_auc_{epoch}.npy"), auc)
+            np.save(os.path.join(nn_dir, f"val_pr_auc_{epoch}.npy"), pr_auc)
+            np.save(os.path.join(nn_dir, f"val_protein_aucs_{epoch}.npy"), protein_aucs)
+            np.save(os.path.join(nn_dir, f"val_protein_pr_aucs_{epoch}.npy"), protein_pr_aucs)
+            np.save(os.path.join(nn_dir, f"val_y_pred_{epoch}.npy"), y_pred)
+            np.save(os.path.join(nn_dir, f"val_y_true_{epoch}.npy"), y_true)
+
         val_losses.append(val_loss)
         pr_auc = np.load(os.path.join(nn_dir, f"val_pr_auc_{epoch}.npy"))
         if val_loss < best_val:
@@ -58,18 +83,22 @@ def get_training_data_for_restart(model, opt, nn_dir):
 
 
 def make_model():
-    #Emailed the lead author for what these values should be, these are good defaults.
-    model = MQAModel(node_features=(8, 50), edge_features=(1, 32),
-                     hidden_dim=(16, HIDDEN_DIM),
-                     num_layers=NUM_LAYERS, dropout=DROPOUT_RATE,
-                     ablate_sidechain_vectors=ablate_sidechain_vectors)
+    if use_pretrained:
+        model = MQAModel(node_features=(8, 100), edge_features=(1,32),
+                         hidden_dim=(16,100), dropout=1e-3)
+    else:
+        model = MQAModel(node_features=(8, 50), edge_features=(1, 32),
+                         hidden_dim=(16, HIDDEN_DIM),
+                         num_layers=NUM_LAYERS, dropout=DROPOUT_RATE,
+                         ablate_sidechain_vectors=ablate_sidechain_vectors,
+                         use_lm=use_lm, squeeze_lm=squeeze_lm)
     return model
 
 def main():
     # Prepare data
     print(f'using {FILESTEM} training data')
     # batch size = N proteins
-    trainset = simulation_dataset(BATCH_SIZE, FILESTEM, use_tensors=use_tensors)
+    trainset = simulation_dataset(BATCH_SIZE, FILESTEM, use_tensors=use_tensors, use_lm=use_lm)
     print('training data loaded')
 
     if weight_globally:
@@ -98,6 +127,9 @@ def main():
         train_losses = []
         start_epoch = 0
 
+    if use_pretrained:
+        load_checkpoint(model, optimizer, '../models/casp_pretrained')
+
     for epoch in range(start_epoch, NUM_EPOCHS):
         if weight_globally:
             loss, y_pred, y_true = train_func(trainset, model, optimizer=optimizer,
@@ -117,7 +149,8 @@ def main():
         save_checkpoint(model_path, model, optimizer, model_id, epoch)
 
         # Determine validation loss and performance statistics
-        predictions, mask = predict_on_xtals(model, xtal_val_ids, test=False, use_tensors=use_tensors)
+        predictions, mask = predict_on_xtals(model, xtal_val_ids, test=False,
+            use_tensors=use_tensors, use_lm=use_lm)
         # predictions has shape N proteins x max length among N proteins
         np.save(os.path.join(outdir, f"val_predictions_{epoch}.npy"), predictions)
 
@@ -151,7 +184,8 @@ def main():
 
     load_checkpoint(model, optimizer, path)
 
-    predictions, mask = predict_on_xtals(model, xtal_test_path, test=True, use_tensors=use_tensors)
+    predictions, mask = predict_on_xtals(model, xtal_test_path, test=True,
+        use_tensors=use_tensors, use_lm=use_lm)
     np.save(os.path.join(outdir, f"test_predictions.npy"), predictions)
 
     loss, tp, fp, tn, fn, acc, prec, recall, auc, pr_auc, y_pred, y_true, protein_aucs, protein_pr_aucs = assess_performance(predictions,
@@ -378,12 +412,12 @@ def get_indices(y):
     if train_on_intermediates:
         iis = [[struct_index, res_index]
                for struct_index, y_vals in enumerate(y)
-               for res_index in range(len(y_vals))]
+               for res_index in np.where(y_vals >= 0)[0]]
     else:
         iis = [[struct_index, res_index]
                for struct_index, y_vals in enumerate(y)
-               for res_index, res_example in enumerate(y_vals)
-               if res_example >= pos_thresh or res_example < neg_thresh]
+               for res_index in np.where(y_vals >= 0)[0]
+               if y_vals[res_index] >= pos_thresh or y_vals[res_index] < neg_thresh]
     return iis
 
 def use_global_weights(y, positive_weight, negative_weight):
@@ -656,7 +690,7 @@ def process_struc(paths, use_tensors=True):
 
     return X, S, mask
 
-def process_paths(apo_IDs, use_tensors=True):
+def process_paths(apo_IDs, use_tensors=True, use_lm=False):
     """Takes a list of apo IDs to pdb files
     """
     pdb_dir = '/project/bowmanlab/borowsky.jonathan/FAST-cs/pocket-tracking/all-structures/'
@@ -680,7 +714,11 @@ def process_paths(apo_IDs, use_tensors=True):
         X = np.zeros([B, L_max, 5, 3], dtype=np.float32)
     else:
         X = np.zeros([B, L_max, 4, 3], dtype=np.float32)
-    S = np.zeros([B, L_max], dtype=np.int32)
+
+    if use_lm:
+        S = np.zeros([B, L_max, 1280], dtype=np.float32)
+    else:
+        S = np.zeros([B, L_max], dtype=np.int32)
 
     for i, prot_bb in enumerate(pdbs):
         l = prot_bb.top.n_residues
@@ -698,8 +736,19 @@ def process_paths(apo_IDs, use_tensors=True):
         else:
             xyz = prot_bb.xyz.reshape(l, 4, 3)
 
-        seq = [r.name for r in prot_bb.top.residues]
-        S[i, :l] = np.asarray([lookup[abbrev[a]] for a in seq], dtype=np.int32)
+        if use_lm:
+            fn = f'S_embedding_{apo_IDs[i]}.npy'
+            S_path = f'/project/bowmanlab/mdward/projects/FAST-pocket-pred/precompute_S/{fn}'
+            if os.path.exists(S_path):
+                S[i, :l] = np.load(S_path)
+            else:
+                fn = f'S_embedding_{apo_IDs[i].upper()}.npy'
+                S_path = f'/project/bowmanlab/mdward/projects/FAST-pocket-pred/precompute_S/{fn}'
+                S[i, :l] = np.load(S_path)
+        else:
+            seq = [r.name for r in prot_bb.top.residues]
+            S[i, :l] = np.asarray([lookup[abbrev[a]] for a in seq], dtype=np.int32)
+
         X[i] = np.pad(xyz, [[0,L_max-l], [0,0], [0,0]],
                       'constant', constant_values=(np.nan, ))
 
@@ -708,9 +757,12 @@ def process_paths(apo_IDs, use_tensors=True):
     X[isnan] = 0.
     X = np.nan_to_num(X)
 
+    if use_lm:
+        S = tf.convert_to_tensor(S)
+
     return X, S, mask
 
-def predict_on_xtals(model, xtal_set, test=False, use_tensors=True):
+def predict_on_xtals(model, xtal_set, test=False, use_tensors=True, use_lm=False):
     '''
     xtal_set_path : string
         path to npy file containing array of tuples
@@ -725,7 +777,7 @@ def predict_on_xtals(model, xtal_set, test=False, use_tensors=True):
         X, S, mask = process_struc(strucs)
     else:
         val_set_apo_ids = np.load(xtal_set, allow_pickle=True)
-        X, S, mask = process_paths(val_set_apo_ids, use_tensors=use_tensors)
+        X, S, mask = process_paths(val_set_apo_ids, use_tensors=use_tensors, use_lm=use_lm)
 
     prediction = model(X, S, mask, train=False, res_level=True)
     mask = mask.astype(bool)
@@ -826,6 +878,23 @@ xtal_test_path = training_config['xtal_test_path']
 base_path = training_config['base_path']
 
 use_tensors = True
+
+if 'use_lm' in training_config:
+    use_lm = training_config['use_lm']
+else:
+    use_lm = False
+
+if 'use_lm' in training_config and 'squeeze_lm' in training_config:
+    squeeze_lm = training_config['squeeze_lm']
+else:
+    squeeze_lm = False
+
+
+if 'use_pretrained' in training_config:
+    use_pretrained = training_config['use_pretrained']
+else:
+    use_pretrained = False
+
 ######### END INPUTS ##############
 
 
@@ -862,25 +931,37 @@ else:
 nn_name = (f"net_8-50_1-32_16-100_"
            f"dr_{DROPOUT_RATE}_"
            f"nl_{NUM_LAYERS}_hd_{HIDDEN_DIM}_"
-           f"lr_{LEARNING_RATE}_{batch_string}_"
+           f"lr_{LEARNING_RATE}_"
+           f"{batch_string}_"
            f"{NUM_EPOCHS}epoch_"
            f"feat_method_{featurization_method}_rank_{min_rank}_"
            f"stride_{stride}_window_{window}_pos_{pos_thresh}")
 
-if not ablate_sidechain_vectors:
-    nn_name += "_sidechains"
-
 if not train_on_intermediates:
     nn_name += f"_neg_{neg_thresh}"
 
-outdir = f'{base_path}/{subdir_name}/{nn_name}/'
+if not ablate_sidechain_vectors:
+    nn_name += "_sidechains"
+
+if use_lm:
+    nn_name += "_lm"
+
+if squeeze_lm:
+    nn_name += "_squeeze"
+
+if use_pretrained:
+    nn_name += "_pretrained"
+
+outdir = f'{base_path}/{subdir_name}/{nn_name}'
 
 ####### END CREATE OUTPUT FILENAMES #####
 
 if continue_previous_training:
-    outdir = (previous_nn_dir +
-              f"_refine_feat_method_{featurization_method}_rank_{min_rank}_"
-              f"stride_{stride}_window_{window}_pos_{pos_thresh}/")
+    if outdir != previous_nn_dir:
+        # TO DO check if the only difference is the number of epochs
+        outdir = (previous_nn_dir +
+                  f"_refine_feat_method_{featurization_method}_rank_{min_rank}_"
+                  f"stride_{stride}_window_{window}_pos_{pos_thresh}/")
 
     # old_nn_name = (f"net_8-50_1-32_16-100_"
     #                f"dr_{DROPOUT_RATE}_"
@@ -894,7 +975,7 @@ if continue_previous_training:
 print(outdir)
 
 os.makedirs(outdir, exist_ok=True)
-model_path = outdir + '{}_{}'
+model_path = outdir + '/{}_{}'
 FILESTEM = f'{featurization_method}-min-rank-{min_rank}-window-{window}-stride-{stride}'
 
 #### GPU INFO ####
