@@ -8,6 +8,7 @@ from glob import glob
 from tensorflow import keras as keras
 from tqdm import tqdm
 from validate_performance_on_xtals import process_strucs, process_paths, predict_on_xtals
+from optimal_threshold_protein_performance import determine_optimal_threshold, determine_recall_or_sensitivity
 
 if __name__ == '__main__':
     val_label_dictionary = np.load('/project/bowmore/ameller/projects/pocket_prediction/data/val_label_dictionary.npy',
@@ -181,5 +182,21 @@ if __name__ == '__main__':
 
         np.save(f'{nn_dir}/test_auc.npy', auc_metric.result().numpy())
         np.save(f'{nn_dir}/test_pr_auc.npy', pr_auc_metric.result().numpy())
+
+        # Determine protein-level performance
+        optimal_threshold = determine_optimal_threshold(test_y_pred, test_y_true)
+        print(optimal_threshold)
+
+        # parse only those predictions for cryptic residues and negative residues
+        parsed_y_pred = [np.array(y)[m] for y, m in zip(predictions, test_label_mask)]
+        parsed_y_true = [y[m] for y, m in zip(test_true_labels, test_label_mask)]
+        print(parsed_y_pred[0])
+        print(parsed_y_true[0])
+
+        protein_performance = determine_recall_or_sensitivity(parsed_y_pred, parsed_y_true, optimal_threshold)
+
+        np.save(os.path.join(nn_dir, 'test_protein_performance.npy'), protein_performance)
+
+        print([(p, round(v, 3)) for p, v in zip(test_label_dictionary.keys(), protein_performance)])
 
 

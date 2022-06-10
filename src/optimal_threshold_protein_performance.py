@@ -16,8 +16,6 @@ def determine_optimal_threshold(y_pred, y_true):
     fpr, tpr, thresholds = metrics.roc_curve(y_true, y_pred)
     j_statistic = tpr - fpr
 
-    print(metrics.auc(fpr, tpr))
-
     return thresholds[j_statistic.argmax()]
 
 
