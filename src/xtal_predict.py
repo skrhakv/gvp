@@ -7,7 +7,7 @@ import os
 
 from validate_performance_on_xtals import process_strucs, predict_on_xtals
 
-def make_predictions(pdb_paths, model, nn_path):
+def make_predictions(pdb_paths, model, nn_path, debug=False, output_basename=None):
     '''
         pdb_paths : list of pdb paths
         model : MQAModel corresponding to network in nn_path
@@ -15,6 +15,10 @@ def make_predictions(pdb_paths, model, nn_path):
     '''
     strucs = [md.load(s) for s in pdb_paths]
     X, S, mask = process_strucs(strucs)
+    if debug:
+        np.save(f'{output_basename}_X.npy', X)
+        np.save(f'{output_basename}_S.npy', S)
+        np.save(f'{output_basename}_mask.npy', mask)
     predictions = predict_on_xtals(model, nn_path, X, S, mask)
     return predictions
 
@@ -44,7 +48,8 @@ if __name__ == '__main__':
                      hidden_dim=(16, HIDDEN_DIM),
                      num_layers=NUM_LAYERS, dropout=DROPOUT_RATE)
 
-    predictions = make_predictions(strucs, model, nn_path)
+    output_basename = f'/project/bowmore/ameller/projects/pocket_prediction/data/{output_name}'
+    predictions = make_predictions(strucs, model, nn_path, debug=True, output_basename=output_basename)
 
     # TO DO - decide how to save predictions
     np.save(f'/project/bowmore/ameller/projects/pocket_prediction/data/{output_name}-preds.npy', predictions)

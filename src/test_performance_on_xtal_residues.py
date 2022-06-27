@@ -128,6 +128,8 @@ if __name__ == '__main__':
         auc_metric = keras.metrics.AUC(name='auc')
         pr_auc_metric = keras.metrics.AUC(curve='PR', name='pr_auc')
 
+        val_optimal_thresholds = []
+
         # for epoch in tqdm(range(len(val_files))):
         for epoch in tqdm(range(3)):
             nn_path = f"{nn_dir}/{nn_id}_{str(epoch).zfill(3)}"
@@ -139,18 +141,20 @@ if __name__ == '__main__':
             y_pred = predictions[mask_val.astype(bool) & val_label_mask]
             y_true = val_true_labels[val_label_mask]
 
-            print(np.unique(y_true))
-
             auc_metric.update_state(y_true, y_pred)
             pr_auc_metric.update_state(y_true, y_pred)
 
             pr_auc.append(pr_auc_metric.result().numpy())
             auc.append(auc_metric.result().numpy())
 
+            # determine optimal threshold for validation set
+            val_optimal_thresholds.append(determine_optimal_threshold(y_pred, y_true))
+
             # reset AUC and PR-AUC
             pr_auc_metric.reset_state()
             auc_metric.reset_state()
 
+        print(val_optimal_thresholds)
         print(f'Validation ROC-AUCs: {auc}')
         best_epoch = np.argmax(auc)
         print(f'best epoch is {best_epoch}')
@@ -184,7 +188,8 @@ if __name__ == '__main__':
         np.save(f'{nn_dir}/test_pr_auc.npy', pr_auc_metric.result().numpy())
 
         # Determine protein-level performance
-        optimal_threshold = determine_optimal_threshold(test_y_pred, test_y_true)
+        # optimal_threshold = determine_optimal_threshold(test_y_pred, test_y_true)
+        optimal_threshold = val_optimal_thresholds[best_epoch]
         print(optimal_threshold)
 
         # parse only those predictions for cryptic residues and negative residues
