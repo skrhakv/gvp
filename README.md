@@ -16,8 +16,45 @@ This repository is meant to serve two purposes. If you would like to make predic
 * tqdm==4.42.1
 * mdtraj==1.9.7
 
-## Cryptic pocket predictions
-To use the PocketMiner model, we recommend considering using its web interface (https://pocket-miner-ui.azurewebsites.net/). If however you would like to run predictions on a large number of structures, we suggest modifying the input and output of `xtal_predict.py` in the `src` directory. There are flags containing `TO DO` that will guide where the code needs to be modified.
+We have tested the code with tensorflow versions 2.6.2 and 2.9.1 as well and find that is compatible with these more recent version of tensorflow.
+
+No special hardware is required to run this software.
+
+## Installation
+First, clone the PocketMiner repository
+```
+git clone https://github.com/Mickdub/gvp.git
+git switch pocket_pred
+```
+Then prepare a conda environment (you can use pip and the `linux-requirements.txt` file if you would like) that contains tensorflow, mdtraj, and numpy.
+```
+conda env create -f pocketminer.yml
+conda activate pocketminer
+```
+There is also a Linux specific `.yml` file called `tf-linux.yml` that may be used by Linx users. Typcially, preparing a conda environment with the required dependencies requires only a minute. Please note that we have removed version number requirements from the `pocketminer.yml` file as we found that this worked better across platforms. We have tested setup on Linux and MacOS devices. We will try to validate the instructions for Windows computers shortly.
+
+## Cryptic pocket predictions demo
+To use the PocketMiner model, we recommend considering using its web interface (https://pocket-miner-ui.azurewebsites.net/). If however you would like to test the code directly or run predictions on a large number of structures, we suggest modifying the input of `xtal_predict.py` in the `src` directory. There are flags containing `TO DO` that will guide where the code needs to be modified.
+
+There is a demo PDB file in the repository that is used in `xtal_predict.py` (a PDB file of the human protein ACE2). In the code below, simply specify where you would like to send the output. This code will generate a numpy file as well as text file with a prediction for each residue in the input structure:
+
+```
+    # TO DO - provide input pdb(s), output name, and output folder
+    strucs = [
+        '../data/ACE2.pdb',
+    ]
+    output_name = 'ACE2'
+    output_folder = '.'
+```
+Once you have cloned the repository and created a conda environment, enter the directory and run 
+```
+cd src
+python xtal_predict.py
+```
+Running this script should only take a few seconds on a standard computer (a GPU is not required for rapid predictions but is preferred for new model training).
+
+Currently, modifying the `strucs` list to contain multiple structures is not supported (though we will build this functionality in an upcoming update). We recommend looping over the entire main method if you would like to make predictions for multiple structures.
+
 
 ## Transfer learning with the PocketMiner
 The following code is needed to create a model object and load the weights from a checkpoint file:
