@@ -24,29 +24,18 @@ def make_predictions(pdb_paths, model, nn_path, debug=False, output_basename=Non
 
 # main method
 if __name__ == '__main__':
-    # inputs
-    nn_dir = '/project/bowmanlab/ameller/gvp/task2/train-with-4-residue-batches-no-balancing-intermediates-in-training/net_8-50_1-32_16-100_dr_0.1_nl_4_hd_100_lr_2e-05_b4resis_b1proteins_20epoch_feat_method_gp-to-nearest-resi-procedure_rank_7_stride_1_window_40_pos_20_refine_feat_method_fpocket_drug_scores_max_window_40_cutoff_0.3_stride_5'
-    best_epoch = 1
-
-    # TO DO - provide pdbs
+    # TO DO - provide input pdb(s), output name, and output folder
     strucs = [
         '../data/ACE2.pdb',
     ]
     output_name = 'ACE2'
-    output_folder = '/project/bowmore/ameller/projects/pocket_prediction/data'
+    output_folder = '.'
 
     # debugging mode can be turned on to output protein features and sequence
     debug = False
 
-    # Determine path to checkpoint files
-    index_filenames = glob(f"{nn_dir}/*.index")
-    nn_id = os.path.basename(index_filenames[0]).split('_')[0]
-    nn_path = f"{nn_dir}/{nn_id}_{str(best_epoch).zfill(3)}"
-
+    # Load MQA Model used for selected NN network
     nn_path = "../models/pocketminer"
-    print(f'using network {nn_path}')
-
-    # MQA Model used for selected NN network
     DROPOUT_RATE = 0.1
     NUM_LAYERS = 4
     HIDDEN_DIM = 100
