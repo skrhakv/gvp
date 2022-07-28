@@ -30,14 +30,20 @@ if __name__ == '__main__':
 
     # TO DO - provide pdbs
     strucs = [
-        '/project/bowmore/ameller/projects/pocket_prediction/data/myo1b.pdb',
+        '../data/ACE2.pdb',
     ]
-    output_name = 'myo1b'
+    output_name = 'ACE2'
+    output_folder = '/project/bowmore/ameller/projects/pocket_prediction/data'
+
+    # debugging mode can be turned on to output protein features and sequence
+    debug = False
 
     # Determine path to checkpoint files
     index_filenames = glob(f"{nn_dir}/*.index")
     nn_id = os.path.basename(index_filenames[0]).split('_')[0]
     nn_path = f"{nn_dir}/{nn_id}_{str(best_epoch).zfill(3)}"
+
+    nn_path = "../models/pocketminer"
     print(f'using network {nn_path}')
 
     # MQA Model used for selected NN network
@@ -47,11 +53,16 @@ if __name__ == '__main__':
     model = MQAModel(node_features=(8, 50), edge_features=(1, 32),
                      hidden_dim=(16, HIDDEN_DIM),
                      num_layers=NUM_LAYERS, dropout=DROPOUT_RATE)
+    
+    
+    if debug:
+        output_basename = f'{output_folder}/{output_name}'
+        predictions = make_predictions(strucs, model, nn_path, debug=True, output_basename=output_basename)
+    else:
+        predictions = make_predictions(strucs, model, nn_path)
 
-    output_basename = f'/project/bowmore/ameller/projects/pocket_prediction/data/{output_name}'
-    predictions = make_predictions(strucs, model, nn_path, debug=True, output_basename=output_basename)
-
-    # TO DO - decide how to save predictions
-    np.save(f'/project/bowmore/ameller/projects/pocket_prediction/data/{output_name}-preds.npy', predictions)
+    # output filename can be modified here
+    np.save(f'{output_folder}/{output_name}-preds.npy', predictions)
+    np.savetxt(os.path.join(output_folder,f'{output_name}-predictions.txt'), predictions, fmt='%.4g', delimiter='\n')
 
 
