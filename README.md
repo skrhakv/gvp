@@ -31,7 +31,7 @@ Then prepare a conda environment (you can use pip and the `linux-requirements.tx
 conda env create -f pocketminer.yml
 conda activate pocketminer
 ```
-There is also a Linux specific `.yml` file called `tf-linux.yml` that may be used by Linx users. Typcially, preparing a conda environment with the required dependencies requires only a minute. Please note that we have removed version number requirements from the `pocketminer.yml` file as we found that this worked better across platforms. We have tested setup on Linux and MacOS devices. We will try to validate the instructions for Windows computers shortly.
+There is also a Linux specific `.yml` file called `tf-linux.yml` that may be used by Linux users. Typcially, preparing a conda environment with the required dependencies requires only a minute. Please note that we have removed version number requirements from the `pocketminer.yml` file as we found that this worked better across operating systems. We have tested setup on Linux and MacOS. We will try to validate these instructions for Windows computers shortly.
 
 ## Cryptic pocket predictions demo
 To use the PocketMiner model, we recommend considering using its web interface (https://pocket-miner-ui.azurewebsites.net/). If however you would like to test the code directly or run predictions on a large number of structures, we suggest modifying the input of `xtal_predict.py` in the `src` directory. There are flags containing `TO DO` that will guide where the code needs to be modified.
@@ -51,7 +51,7 @@ Once you have cloned the repository and created a conda environment, enter the d
 cd src
 python xtal_predict.py
 ```
-Running this script should only take a few seconds on a standard computer (a GPU is not required for rapid predictions but is preferred for new model training).
+Running this script should only take a few seconds on a standard computer (a GPU is not required for making predictions but is preferred for new model training).
 
 Currently, modifying the `strucs` list to contain multiple structures is not supported (though we will build this functionality in an upcoming update). We recommend looping over the entire main method if you would like to make predictions for multiple structures.
 
