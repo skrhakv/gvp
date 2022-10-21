@@ -16,7 +16,7 @@ X, S, mask = process_strucs(strucs)
 X = tf.convert_to_tensor(X)
 S = tf.convert_to_tensor(S)
 
-print(S)
+# print(S)
 
 # Load MQA Model used for selected NN network
 nn_path = "../models/pocketminer"
