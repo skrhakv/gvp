@@ -1,6 +1,7 @@
 from models import MQAModel
 from validate_performance_on_xtals import process_strucs
 from util import load_checkpoint
+import datasets
 import mdtraj as md
 import tensorflow as tf
 import numpy as np
@@ -63,11 +64,15 @@ new_h_S_i = tf.linalg.matmul(new_h_S, tf.linalg.pinv(model.W_s.weights[0]))
 new_S = tf.math.argmax(tf.nn.softmax(new_h_S_i), axis=2)
 
 # print positions that are changed
-print(tf.where(~tf.math.equal(tf.cast(S, dtype=tf.int64), new_S)))
-# print(S, new_S)
-# for modified_position in tf.where(~tf.math.equal(tf.cast(S, dtype=tf.int64), new_S)):
-#     print(modified_position)
-#     print(S[modified_position], new_S[modified_position])
+reverse_lookup = {
+    v: k
+    for k, v in datasets.lookup.items()
+}
+
+old_modified_positions = tf.gather_nd(S, indices=tf.where(~tf.math.equal(tf.cast(S, dtype=tf.int64), new_S)))
+new_modified_positions = tf.gather_nd(new_S, indices=tf.where(~tf.math.equal(tf.cast(S, dtype=tf.int64), new_S)))
+for s_o, s_n in zip(old_modified_positions, new_modified_positions):
+    print(reverse_lookup[s_o.numpy()], '->', reverse_lookup[s_n.numpy()])
 
 # make prediction using new sequence
 new_prediction = model(X, new_S, mask, train=False, res_level=True)
