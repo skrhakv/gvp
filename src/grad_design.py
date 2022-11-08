@@ -9,7 +9,7 @@ from gvp import *
 
 # load and featurize protein
 pdb_paths = [
-    '../data/ACE2.pdb',
+    '../data/myh11-1br2.pdb',
 ]
 strucs = [md.load(s) for s in pdb_paths]
 
@@ -36,7 +36,10 @@ load_checkpoint(model, tf.keras.optimizers.Adam(), nn_path)
 # would need to adapt this code if we wanted to do this in batches
 cryptic_mask = np.zeros((1, S.shape[1]), dtype=bool)
 # set residues that are in the relevant cryptic site to True
-cryptic_mask[:, 100:200] = True
+cryptic_pocket_resids = np.array(
+    [206, 207, 208, 229, 230, 231, 232, 425, 426, 436, 437, 440, 441,
+     444, 618, 622, 625, 626, 629])
+cryptic_mask[:, cryptic_pocket_resids] = True
 
 #  grad = Lambda(lambda x: tf.gradients(x[0],x[1])[0])([loss, I])
 with tf.GradientTape() as tape:
@@ -58,7 +61,7 @@ assert tf.math.reduce_all(tf.math.equal(tf.cast(S, dtype=tf.int64), embedding_in
 grads = tape.gradient(out, h_S)
 
 # make an update to sequence
-update_step_size = 1
+update_step_size = 5
 new_h_S = h_S + grads * update_step_size
 new_h_S_i = tf.linalg.matmul(new_h_S, tf.linalg.pinv(model.W_s.weights[0]))
 new_S = tf.math.argmax(tf.nn.softmax(new_h_S_i), axis=2)
@@ -69,9 +72,12 @@ reverse_lookup = {
     for k, v in datasets.lookup.items()
 }
 
+modified_position_resids = tf.where(~tf.math.equal(tf.cast(S, dtype=tf.int64), new_S))
 old_modified_positions = tf.gather_nd(S, indices=tf.where(~tf.math.equal(tf.cast(S, dtype=tf.int64), new_S)))
 new_modified_positions = tf.gather_nd(new_S, indices=tf.where(~tf.math.equal(tf.cast(S, dtype=tf.int64), new_S)))
-for s_o, s_n in zip(old_modified_positions, new_modified_positions):
+
+for s_o, rid, s_n in zip(old_modified_positions, modified_position_resids, new_modified_positions):
+    print(strucs[0].top.residue(rid[1]))
     print(reverse_lookup[s_o.numpy()], '->', reverse_lookup[s_n.numpy()])
 
 # make prediction using new sequence
