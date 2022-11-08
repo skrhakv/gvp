@@ -49,33 +49,29 @@ with tf.GradientTape() as tape:
     out = tf.squeeze(model.dense(h_V_out, training=False), -1)
     out = tf.boolean_mask(out, cryptic_mask)
 
-    # prediction = model(X, S, mask, train=False, res_level=True)
-
-# print([var.name for var in tape.watched_variables()])
-
-# gradient of sequence embedding with respect to output
-print(out.shape)
+# first assert that inverse of embedding reproduces the input sequence
+S_i = tf.linalg.matmul(h_S, tf.linalg.pinv(model.W_s.weights[0]))
+embedding_inverse = tf.math.argmax(tf.nn.softmax(S_i), axis=2)
+assert tf.math.reduce_all(tf.math.equal(tf.cast(S, dtype=tf.int64), embedding_inverse))
 
 grads = tape.gradient(out, h_S)
-print(grads)
-
-# grads = tape.gradient(prediction, model.W_s(S)) # last layer befor residue classification
-# grads = tape.gradient(prediction, S)
 
 # make an update to sequence
 update_step_size = 1
-updated_h_S = h_S + grads * update_step_size
-print(updated_h_S)
+new_h_S = h_S + grads * update_step_size
+new_h_S_i = tf.linalg.matmul(new_h_S, tf.linalg.pinv(model.W_s.weights[0]))
+new_S = tf.math.argmax(tf.nn.softmax(new_h_S_i), axis=2)
 
-# need Decoder to convert Embedding to sequence
+# print positions that are changed
+print(tf.where(~tf.math.equal(tf.cast(S, dtype=tf.int64), new_S)))
+# print(S, new_S)
+# for modified_position in tf.where(~tf.math.equal(tf.cast(S, dtype=tf.int64), new_S)):
+#     print(modified_position)
+#     print(S[modified_position], new_S[modified_position])
 
-# Y = model(X,S)
-# pocket_objective = classification(Y)
+# make prediction using new sequence
+new_prediction = model(X, new_S, mask, train=False, res_level=True)
+cryptic_pocket_prediction = tf.boolean_mask(new_prediction, cryptic_mask)
 
-# grads = tape.gradient(prediction, Y)
-#update gradient --> Y'
-# Y' = softmax(Y)
-# rest of steps onehot, stop_gradient
-
-
-
+# verify that new prediction is larger than the previous one
+print(tf.reduce_mean(cryptic_pocket_prediction), tf.reduce_mean(out))
