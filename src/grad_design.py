@@ -36,9 +36,11 @@ load_checkpoint(model, tf.keras.optimizers.Adam(), nn_path)
 # would need to adapt this code if we wanted to do this in batches
 cryptic_mask = np.zeros((1, S.shape[1]), dtype=bool)
 # set residues that are in the relevant cryptic site to True
+# cryptic_pocket_resids = np.array(
+#     [206, 207, 208, 229, 230, 231, 232, 425, 426, 436, 437, 440, 441,
+#      444, 618, 622, 625, 626, 629])
 cryptic_pocket_resids = np.array(
-    [206, 207, 208, 229, 230, 231, 232, 425, 426, 436, 437, 440, 441,
-     444, 618, 622, 625, 626, 629])
+    [229, 230, 657])
 cryptic_mask[:, cryptic_pocket_resids] = True
 
 #  grad = Lambda(lambda x: tf.gradients(x[0],x[1])[0])([loss, I])
@@ -61,7 +63,7 @@ assert tf.math.reduce_all(tf.math.equal(tf.cast(S, dtype=tf.int64), embedding_in
 grads = tape.gradient(out, h_S)
 
 # make an update to sequence
-update_step_size = 5
+update_step_size = 25
 new_h_S = h_S + grads * update_step_size
 new_h_S_i = tf.linalg.matmul(new_h_S, tf.linalg.pinv(model.W_s.weights[0]))
 new_S = tf.math.argmax(tf.nn.softmax(new_h_S_i), axis=2)
