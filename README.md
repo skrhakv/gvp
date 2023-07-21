@@ -79,3 +79,26 @@ load_checkpoint(model, tf.keras.optimizers.Adam(), nn_path)
 ```
 
 Then, you can continue training the model. Please refer to `train_xtal_predictor.py` for an example of how to write a training loop. There are also multiple class balancing schemes implemented in that file.
+
+## PocketMiner cryptic pocket dataset and negative examples
+We have created a novel dataset of cryptic pockets. We filtered the Protein Data Bank (PDB) to identify 38 apo-holo protein structure pairs containing 39 cryptic pockets with large root mean square deviations between apo and holo. The resulting collection of cryptic pockets, called the PocketMiner dataset, includes pockets formed by multiple types of conformational changes. Furthermore, we have generated a dataset of 'negative examples' (i.e. residues that are highly unlikely to participate in cryptic pocket formation). The details of how these 'negative examples' were generated can be found in the [manuscript](https://www.nature.com/articles/s41467-023-36699-3).
+
+![plot](./fig4_vF.pdf)
+
+These cryptic pocket and negative examples can be used to validate models trained to predict cryptic pockets. The `src/test_performance_on_xtal_residues.py` script showcases code that was used to test our model. In the `data/pm-dataset` folder we have included files containing the labels for each apo (ligand-free) PDB entry as well as a file that contains the PDB IDs with chainids. The chainids are required to access the cleaned structures found in `data/pm-dataset/apo-structures`.
+
+The following code loads up the dictionaries and PDBs with chainids:
+```
+    val_label_dictionary = np.load('/project/bowmore/ameller/projects/pocket_prediction/data/val_label_dictionary.npy',
+                               allow_pickle=True).item()
+    val_set_apo_ids_with_chainids = np.load('/project/bowmore/ameller/projects/'
+                                            'pocket_prediction/data/val_apo_ids_with_chainids.npy')
+    
+    test_label_dictionary = np.load('/project/bowmore/ameller/projects/pocket_prediction/data/test_label_dictionary.npy',
+                                    allow_pickle=True).item()
+    test_set_apo_ids_with_chainids = np.load('/project/bowmore/ameller/projects/'
+                                             'pocket_prediction/data/test_apo_ids_with_chainids.npy')
+```                                         
+Please note that the dictionaries map from PDB IDs to lists of 0s, 1s, and 2s. 0 indicate negative residues (i.e., those residues that do not form cryptic pockets with high likelihood).1s indicate residues that form cryptic pockets based on a corresponding holo, ligand-bound experimental structures. 2s are residues that could not be classified with high certainty and were excluded from validation.
+
+
