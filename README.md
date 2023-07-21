@@ -83,7 +83,7 @@ Then, you can continue training the model. Please refer to `train_xtal_predictor
 ## PocketMiner cryptic pocket dataset and negative examples
 We have created a novel dataset of cryptic pockets. We filtered the Protein Data Bank (PDB) to identify 38 apo-holo protein structure pairs containing 39 cryptic pockets with large root mean square deviations between apo and holo. The resulting collection of cryptic pockets, called the PocketMiner dataset, includes pockets formed by multiple types of conformational changes. Furthermore, we have generated a dataset of 'negative examples' (i.e. residues that are highly unlikely to participate in cryptic pocket formation). The details of how these 'negative examples' were generated can be found in the [manuscript](https://www.nature.com/articles/s41467-023-36699-3).
 
-![plot](./fig4_vF.pdf)
+![plot](./fig4_vF.png)
 
 These cryptic pocket and negative examples can be used to validate models trained to predict cryptic pockets. The `src/test_performance_on_xtal_residues.py` script showcases code that was used to test our model. In the `data/pm-dataset` folder we have included files containing the labels for each apo (ligand-free) PDB entry as well as a file that contains the PDB IDs with chainids. The chainids are required to access the cleaned structures found in `data/pm-dataset/apo-structures`.
 
