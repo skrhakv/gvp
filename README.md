@@ -99,6 +99,27 @@ The following code loads up the dictionaries and PDBs with chainids:
     test_set_apo_ids_with_chainids = np.load('/project/bowmore/ameller/projects/'
                                              'pocket_prediction/data/test_apo_ids_with_chainids.npy')
 ```                                         
-Please note that the dictionaries map from PDB IDs to lists of 0s, 1s, and 2s. 0 indicate negative residues (i.e., those residues that do not form cryptic pockets with high likelihood).1s indicate residues that form cryptic pockets based on a corresponding holo, ligand-bound experimental structures. 2s are residues that could not be classified with high certainty and were excluded from validation.
+Please note that the dictionaries map from PDB IDs to lists of 0s, 1s, and 2s. 0s indicate negative residues (i.e., those residues that do not form cryptic pockets with high likelihood).1s indicate residues that form cryptic pockets based on a corresponding holo, ligand-bound experimental structures. 2s are residues that could not be classified with high certainty and were excluded from validation.
 
+## PocketMiner training data
+We are proud to share our PocketMiner training data that can be used for training novel models for cryptic pocket prediction. The training labels can be found in `data/task2` while the actual training data will be in `data/training-data`. The training data is reasonably lightweight (~230 MB).
 
+PocketMiner was trained on types of simulation labels: those derived from LIGSITE as well as those derived from fpocket. PocketMiner was trained to predict the simulation outcome (i.e. whether a residue would participate in a pocket opening) based on the starting structure of a simulation.
+
+As an example, the LIGSITE data corresponding to the "grid point to nearest residue" assignment procedure can be loaded as follows:
+```
+X = np.load('data/task2/X-train-gp-to-nearest-resi-procedure-min-rank-7-window-40-stride-1.npy')
+```
+Each array entry will contain an xtc, a topology file to load that xtc, and a frame. The paths correspond to paths on our cluster but can be easily modified to where you are keeping the training data.
+```
+In [37]: X[0]
+Out[37]:
+array(['/project/bowmanlab/ameller/gvp/msft-share/human-nsp16trj_gen000_kid000.xtc',
+       '/project/bowmanlab/ameller/gvp/msft-share/human-nsp16.pdb', '0'],
+      dtype='<U84')
+```
+The corresponding y labels need to be loaded with `allow_pickle=True`:
+```
+y = np.load('data/task2/y-train-gp-to-nearest-resi-procedure-min-rank-7-window-40-stride-1.npy', allow_pickle=True)
+```
+Each entry will contain a list of pocket volume increases per residue. For training PocketMiner, we used a threshold of 20 with the "grid point to nearest residue" assignment scheme.
